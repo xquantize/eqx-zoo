@@ -7,6 +7,9 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 
+[manifest]
+constraints = [{ name = "huggingface-hub", specifier = "<2" }]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.5"
@@ -155,7 +158,6 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "jax" },
     { name = "jaxtyping" },
-    { name = "numpy" },
     { name = "safetensors" },
 ]
 
@@ -169,12 +171,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "equinox", specifier = ">=0.13.8" },
-    { name = "huggingface-hub", specifier = ">=1.5,<2" },
-    { name = "jax", specifier = ">=0.11.2" },
-    { name = "jaxtyping", specifier = ">=0.3.11" },
-    { name = "numpy", specifier = ">=2.5.3" },
-    { name = "safetensors", specifier = ">=0.8.0" },
+    { name = "equinox", specifier = ">=0.12" },
+    { name = "huggingface-hub", specifier = ">=0.30" },
+    { name = "jax", specifier = ">=0.5" },
+    { name = "jaxtyping", specifier = ">=0.3" },
+    { name = "safetensors", specifier = ">=0.5" },
 ]
 
 [package.metadata.requires-dev]
