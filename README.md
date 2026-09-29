@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="eqx-zoo: verified Equinox ports of pretrained models" width="100%">
+  <img src="assets/banner.png" alt="eqx-zoo: verified Equinox ports of pretrained models" width="100%">
 </p>
 
 <p align="center">
