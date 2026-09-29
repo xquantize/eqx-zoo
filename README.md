@@ -26,10 +26,10 @@ Requires Python 3.12+. The example below also uses `pip install tokenizers`.
 import jax.numpy as jnp
 from tokenizers import Tokenizer
 
-from eqx_zoo import Qwen3ForCausalLM, generate
+from eqx_zoo import CausalLM, generate
 
 tokenizer = Tokenizer.from_pretrained("Qwen/Qwen3-0.6B")
-model = Qwen3ForCausalLM.from_pretrained("Qwen/Qwen3-0.6B")
+model = CausalLM.from_pretrained("Qwen/Qwen3-0.6B")
 
 prompt = jnp.array(tokenizer.encode("The capital of France is").ids)
 tokens = generate(model, prompt, max_new_tokens=30)
@@ -39,11 +39,14 @@ print(tokenizer.decode(tokens.tolist()))
 
 ## Models
 
-| Model | Class |
-|---|---|
-| [Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) | `Qwen3ForCausalLM` |
+Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained`. These checkpoints are verified by the test suite:
 
-Each model is tested against Hugging Face activations captured in float32: the output of every layer must match, and greedy generation must reproduce the reference output token for token. See [`tests/`](tests) and [`scripts/make_reference.py`](scripts/make_reference.py).
+| Architecture | Verified checkpoints |
+|---|---|
+| `Qwen3ForCausalLM` | [Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) |
+| `Qwen2ForCausalLM` | [Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) |
+
+Each verified checkpoint is tested against Hugging Face activations captured in float32: every layer's output must match, and greedy generation must reproduce the reference output token for token. See [`tests/`](tests).
 
 ## Development
 
