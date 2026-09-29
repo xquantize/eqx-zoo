@@ -46,6 +46,7 @@ def make_attention(hf_weight) -> Attention:
         head_dim=HEAD_DIM,
         rope_theta=ROPE_THETA,
         eps=EPS,
+        qk_norm=True,
         key=jax.random.key(0),
     )
     names = ("q_proj", "k_proj", "v_proj", "o_proj", "q_norm", "k_norm")

@@ -11,8 +11,10 @@ import jax.numpy as jnp
 from jaxtyping import Array, DTypeLike, Float, Int, PRNGKeyArray
 
 
-def _linear(in_dim: int, out_dim: int, *, key: PRNGKeyArray, dtype: DTypeLike) -> eqx.nn.Linear:
-    return eqx.nn.Linear(in_dim, out_dim, use_bias=False, key=key, dtype=dtype)
+def _linear(
+    in_dim: int, out_dim: int, *, key: PRNGKeyArray, dtype: DTypeLike, bias: bool = False
+) -> eqx.nn.Linear:
+    return eqx.nn.Linear(in_dim, out_dim, use_bias=bias, key=key, dtype=dtype)
 
 
 class RMSNorm(eqx.Module):
@@ -207,18 +209,18 @@ class Cache(eqx.Module):
 
 
 class Attention(eqx.Module):
-    """Causal grouped-query attention with per-head query/key RMSNorm and RoPE.
+    """Causal grouped-query attention with RoPE, optional per-head q/k norm and q/k/v bias.
 
-    Queries and keys are normalised per head before the rotary embedding is applied.
     Each key/value head is shared by `num_heads // num_kv_heads` consecutive query heads.
+    When enabled, queries and keys are normalised per head before the rotary embedding.
 
     Attributes:
         q_proj: Query projection to `num_heads * head_dim`.
         k_proj: Key projection to `num_kv_heads * head_dim`.
         v_proj: Value projection to `num_kv_heads * head_dim`.
         o_proj: Output projection back to the model dimension.
-        q_norm: RMSNorm applied to each query head.
-        k_norm: RMSNorm applied to each key head.
+        q_norm: RMSNorm applied to each query head, or `None` if disabled.
+        k_norm: RMSNorm applied to each key head, or `None` if disabled.
         num_heads: Number of query heads.
         num_kv_heads: Number of key/value heads.
         head_dim: Per-head dimension.
@@ -229,8 +231,8 @@ class Attention(eqx.Module):
     k_proj: eqx.nn.Linear
     v_proj: eqx.nn.Linear
     o_proj: eqx.nn.Linear
-    q_norm: RMSNorm
-    k_norm: RMSNorm
+    q_norm: RMSNorm | None
+    k_norm: RMSNorm | None
     num_heads: int = eqx.field(static=True)
     num_kv_heads: int = eqx.field(static=True)
     head_dim: int = eqx.field(static=True)
@@ -244,7 +246,9 @@ class Attention(eqx.Module):
         num_kv_heads: int,
         head_dim: int,
         rope_theta: float,
-        eps: float,
+        eps: float = 1e-6,
+        qkv_bias: bool = False,
+        qk_norm: bool = False,
         key: PRNGKeyArray,
         dtype: DTypeLike = jnp.float32,
     ):
@@ -257,6 +261,8 @@ class Attention(eqx.Module):
             head_dim: Per-head dimension; independent of `dim // num_heads`.
             rope_theta: RoPE base frequency.
             eps: Epsilon for the query/key RMSNorms.
+            qkv_bias: Whether the query, key and value projections have a bias.
+            qk_norm: Whether to apply RMSNorm to each query and key head.
             key: PRNG key for parameter initialisation.
             dtype: Parameter dtype.
 
@@ -266,12 +272,13 @@ class Attention(eqx.Module):
         if num_heads % num_kv_heads:
             raise ValueError("num_heads must be divisible by num_kv_heads")
         q_key, k_key, v_key, o_key = jax.random.split(key, 4)
-        self.q_proj = _linear(dim, num_heads * head_dim, key=q_key, dtype=dtype)
-        self.k_proj = _linear(dim, num_kv_heads * head_dim, key=k_key, dtype=dtype)
-        self.v_proj = _linear(dim, num_kv_heads * head_dim, key=v_key, dtype=dtype)
-        self.o_proj = _linear(num_heads * head_dim, dim, key=o_key, dtype=dtype)
-        self.q_norm = RMSNorm(head_dim, eps=eps, dtype=dtype)
-        self.k_norm = RMSNorm(head_dim, eps=eps, dtype=dtype)
+        q_dim, kv_dim = num_heads * head_dim, num_kv_heads * head_dim
+        self.q_proj = _linear(dim, q_dim, key=q_key, dtype=dtype, bias=qkv_bias)
+        self.k_proj = _linear(dim, kv_dim, key=k_key, dtype=dtype, bias=qkv_bias)
+        self.v_proj = _linear(dim, kv_dim, key=v_key, dtype=dtype, bias=qkv_bias)
+        self.o_proj = _linear(q_dim, dim, key=o_key, dtype=dtype)
+        self.q_norm = RMSNorm(head_dim, eps=eps, dtype=dtype) if qk_norm else None
+        self.k_norm = RMSNorm(head_dim, eps=eps, dtype=dtype) if qk_norm else None
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
@@ -300,7 +307,8 @@ class Attention(eqx.Module):
         k = jax.vmap(self.k_proj)(x).reshape(seq, self.num_kv_heads, self.head_dim)
         v = jax.vmap(self.v_proj)(x).reshape(seq, self.num_kv_heads, self.head_dim)
 
-        q, k = self.q_norm(q), self.k_norm(k)
+        if self.q_norm is not None and self.k_norm is not None:
+            q, k = self.q_norm(q), self.k_norm(k)
         cos, sin = rope_cos_sin(positions, self.head_dim, self.rope_theta)
         q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
 

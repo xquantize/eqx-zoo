@@ -95,6 +95,7 @@ class Qwen3DecoderLayer(eqx.Module):
             head_dim=config.head_dim,
             rope_theta=config.rope_theta,
             eps=eps,
+            qk_norm=True,
             key=attn_key,
             dtype=dtype,
         )
