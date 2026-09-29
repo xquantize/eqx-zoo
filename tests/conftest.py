@@ -27,3 +27,11 @@ def hf_weight():
     path = Path(snapshot_download(REPO_ID, allow_patterns=["*.safetensors"]))
     with safe_open(path / "model.safetensors", framework="pt") as f:
         yield lambda name: jnp.asarray(f.get_tensor(name).float().numpy())
+
+
+@pytest.fixture(scope="session")
+def model():
+    """Qwen3-0.6B in float32, loaded once per test session."""
+    from eqx_zoo import Qwen3ForCausalLM
+
+    return Qwen3ForCausalLM.from_pretrained(REPO_ID, dtype=jnp.float32)

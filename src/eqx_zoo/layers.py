@@ -142,6 +142,70 @@ def apply_rope(
     return x * cos + rotated * sin
 
 
+class KVCache(eqx.Module):
+    """Preallocated key/value buffers for one attention layer.
+
+    Attributes:
+        k: Cached keys, after normalisation and RoPE.
+        v: Cached values.
+    """
+
+    k: Float[Array, "max_len kv_heads head_dim"]
+    v: Float[Array, "max_len kv_heads head_dim"]
+
+    @classmethod
+    def empty(cls, max_len: int, num_kv_heads: int, head_dim: int, dtype: DTypeLike) -> "KVCache":
+        """Allocate a zero-filled cache.
+
+        Args:
+            max_len: Number of token slots.
+            num_kv_heads: Number of key/value heads.
+            head_dim: Per-head dimension.
+            dtype: Buffer dtype.
+
+        Returns:
+            An empty cache.
+        """
+        shape = (max_len, num_kv_heads, head_dim)
+        return cls(k=jnp.zeros(shape, dtype=dtype), v=jnp.zeros(shape, dtype=dtype))
+
+    def update(
+        self,
+        k: Float[Array, "seq kv_heads head_dim"],
+        v: Float[Array, "seq kv_heads head_dim"],
+        start: Int[Array, ""],
+    ) -> "KVCache":
+        """Write new keys and values into consecutive slots.
+
+        Writes past the end are not checked: JAX clamps out-of-range indices, so the
+        caller must allocate enough slots.
+
+        Args:
+            k: New keys.
+            v: New values.
+            start: Slot at which to write the first new token.
+
+        Returns:
+            The updated cache.
+        """
+        return KVCache(
+            k=jax.lax.dynamic_update_slice_in_dim(self.k, k.astype(self.k.dtype), start, axis=0),
+            v=jax.lax.dynamic_update_slice_in_dim(self.v, v.astype(self.v.dtype), start, axis=0),
+        )
+
+
+class Cache(eqx.Module):
+    """Key/value caches for every layer of a decoder, plus the number of tokens seen.
+
+    Attributes:
+        layers: One `KVCache` per decoder layer.
+        length: Number of tokens processed so far, i.e. the position of the next token.
+    """
+
+    layers: list[KVCache]
+    length: Int[Array, ""]
+
+
 class Attention(eqx.Module):
     """Causal grouped-query attention with per-head query/key RMSNorm and RoPE.
 
@@ -214,16 +278,22 @@ class Attention(eqx.Module):
         self.rope_theta = rope_theta
 
     def __call__(
-        self, x: Float[Array, "seq dim"], positions: Int[Array, " seq"]
-    ) -> Float[Array, "seq dim"]:
-        """Attend causally over a sequence.
+        self,
+        x: Float[Array, "seq dim"],
+        positions: Int[Array, " seq"],
+        cache: KVCache | None = None,
+    ) -> tuple[Float[Array, "seq dim"], KVCache | None]:
+        """Attend causally over a sequence, optionally continuing from a cache.
 
         Args:
-            x: Hidden states for each token.
-            positions: Absolute position of each token, used for the rotary embedding.
+            x: Hidden states for each new token.
+            positions: Absolute position of each new token. Must be consecutive; with a
+                cache, the new keys and values are written starting at slot `positions[0]`.
+            cache: Keys and values of earlier tokens, or `None` to attend only within `x`.
 
         Returns:
-            The attention output for each token, before the residual connection.
+            The attention output for each new token (before the residual connection), and
+            the updated cache, or `None` if no cache was given.
         """
         seq = x.shape[0]
         q = jax.vmap(self.q_proj)(x).reshape(seq, self.num_heads, self.head_dim)
@@ -234,14 +304,21 @@ class Attention(eqx.Module):
         cos, sin = rope_cos_sin(positions, self.head_dim, self.rope_theta)
         q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
 
+        if cache is None:
+            key_positions = positions
+        else:
+            cache = cache.update(k, v, positions[0])
+            k, v = cache.k, cache.v
+            key_positions = jnp.arange(k.shape[0])
+
         groups = self.num_heads // self.num_kv_heads
         k = jnp.repeat(k, groups, axis=1)
         v = jnp.repeat(v, groups, axis=1)
 
         scores = jnp.einsum("qhd,khd->hqk", q, k) * self.head_dim**-0.5
-        causal = jnp.tril(jnp.ones((seq, seq), dtype=bool))
+        causal = key_positions[None, :] <= positions[:, None]
         scores = jnp.where(causal, scores, jnp.finfo(scores.dtype).min)
         probs = jax.nn.softmax(scores.astype(jnp.float32), axis=-1).astype(v.dtype)
 
         out = jnp.einsum("hqk,khd->qhd", probs, v).reshape(seq, self.num_heads * self.head_dim)
-        return jax.vmap(self.o_proj)(out)
+        return jax.vmap(self.o_proj)(out), cache

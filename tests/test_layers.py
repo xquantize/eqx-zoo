@@ -92,5 +92,5 @@ def test_qk_norm(reference, hf_weight):
 def test_self_attention(reference, hf_weight):
     attn = make_attention(hf_weight)
     x = jnp.asarray(reference["layer0.input_layernorm"])
-    out = attn(x, jnp.arange(x.shape[0]))
+    out, _ = attn(x, jnp.arange(x.shape[0]))
     assert_close(out, reference["layer0.self_attn"], 1e-4)

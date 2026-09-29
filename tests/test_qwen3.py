@@ -3,14 +3,6 @@
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import pytest
-
-from eqx_zoo import Qwen3ForCausalLM
-
-
-@pytest.fixture(scope="module")
-def model() -> Qwen3ForCausalLM:
-    return Qwen3ForCausalLM.from_pretrained("Qwen/Qwen3-0.6B", dtype=jnp.float32)
 
 
 def test_layer_by_layer(model, reference):
@@ -21,7 +13,7 @@ def test_layer_by_layer(model, reference):
     np.testing.assert_array_equal(x, reference["embed"])
 
     for i, layer in enumerate(model.model.layers):
-        x = layer(x, positions)
+        x, _ = layer(x, positions)
         np.testing.assert_allclose(
             x, reference[f"layer{i}"], rtol=1e-3, atol=1e-3, err_msg=f"layer {i}"
         )
@@ -30,6 +22,6 @@ def test_layer_by_layer(model, reference):
 
 
 def test_logits(model, reference):
-    logits = eqx.filter_jit(lambda m, ids: m(ids))(model, jnp.asarray(reference["input_ids"]))
+    logits = eqx.filter_jit(lambda m, ids: m(ids)[0])(model, jnp.asarray(reference["input_ids"]))
     np.testing.assert_allclose(logits, reference["logits"], rtol=1e-3, atol=1e-2)
     np.testing.assert_array_equal(logits.argmax(-1), reference["logits"].argmax(-1))

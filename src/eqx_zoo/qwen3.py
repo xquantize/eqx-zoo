@@ -4,7 +4,7 @@ Example:
     >>> import jax.numpy as jnp
     >>> from eqx_zoo import Qwen3ForCausalLM
     >>> model = Qwen3ForCausalLM.from_pretrained("Qwen/Qwen3-0.6B")
-    >>> logits = model(jnp.array([785, 6722, 315, 9625, 374]))
+    >>> logits, _ = model(jnp.array([785, 6722, 315, 9625, 374]))
 """
 
 import dataclasses
@@ -18,7 +18,7 @@ from huggingface_hub import snapshot_download
 from jaxtyping import Array, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo._loading import load_safetensors
-from eqx_zoo.layers import Attention, RMSNorm, SwiGLU
+from eqx_zoo.layers import Attention, Cache, KVCache, RMSNorm, SwiGLU
 
 
 @dataclasses.dataclass(frozen=True)
@@ -102,19 +102,24 @@ class Qwen3DecoderLayer(eqx.Module):
         self.mlp = SwiGLU(config.hidden_size, config.intermediate_size, key=mlp_key, dtype=dtype)
 
     def __call__(
-        self, x: Float[Array, "seq dim"], positions: Int[Array, " seq"]
-    ) -> Float[Array, "seq dim"]:
+        self,
+        x: Float[Array, "seq dim"],
+        positions: Int[Array, " seq"],
+        cache: KVCache | None = None,
+    ) -> tuple[Float[Array, "seq dim"], KVCache | None]:
         """Apply the layer to a sequence.
 
         Args:
             x: Residual stream for each token.
             positions: Absolute position of each token.
+            cache: This layer's key/value cache, or `None`.
 
         Returns:
-            The updated residual stream.
+            The updated residual stream, and the updated cache (or `None`).
         """
-        x = x + self.self_attn(self.input_layernorm(x), positions)
-        return x + jax.vmap(self.mlp)(self.post_attention_layernorm(x))
+        attn_out, cache = self.self_attn(self.input_layernorm(x), positions, cache)
+        x = x + attn_out
+        return x + jax.vmap(self.mlp)(self.post_attention_layernorm(x)), cache
 
 
 class Qwen3Model(eqx.Module):
@@ -146,21 +151,32 @@ class Qwen3Model(eqx.Module):
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, dtype=dtype)
 
     def __call__(
-        self, input_ids: Int[Array, " seq"], positions: Int[Array, " seq"]
-    ) -> Float[Array, "seq dim"]:
+        self,
+        input_ids: Int[Array, " seq"],
+        positions: Int[Array, " seq"],
+        caches: list[KVCache] | None = None,
+    ) -> tuple[Float[Array, "seq dim"], list[KVCache] | None]:
         """Compute final hidden states.
 
         Args:
             input_ids: Token ids.
             positions: Absolute position of each token.
+            caches: One key/value cache per layer, or `None`.
 
         Returns:
-            Normalised hidden states for each token.
+            Normalised hidden states for each token, and the updated caches (or `None`).
         """
         x = self.embed_tokens.weight[input_ids]
-        for layer in self.layers:
-            x = layer(x, positions)
-        return self.norm(x)
+        if caches is None:
+            for layer in self.layers:
+                x, _ = layer(x, positions)
+            return self.norm(x), None
+
+        new_caches = []
+        for layer, cache in zip(self.layers, caches, strict=True):
+            x, cache = layer(x, positions, cache)
+            new_caches.append(cache)
+        return self.norm(x), new_caches
 
 
 class Qwen3ForCausalLM(eqx.Module):
@@ -194,19 +210,47 @@ class Qwen3ForCausalLM(eqx.Module):
             )
         self.config = config
 
-    def __call__(self, input_ids: Int[Array, " seq"]) -> Float[Array, "seq vocab"]:
-        """Compute next-token logits for every position.
+    def __call__(
+        self, input_ids: Int[Array, " seq"], cache: Cache | None = None
+    ) -> tuple[Float[Array, "seq vocab"], Cache | None]:
+        """Compute next-token logits, optionally continuing from a cache.
 
         Args:
-            input_ids: Token ids, starting at position 0.
+            input_ids: Token ids. Without a cache they start at position 0; with a cache
+                they continue from position `cache.length`.
+            cache: State from earlier calls, created with `init_cache`, or `None`.
 
         Returns:
-            Unnormalised next-token logits for each position.
+            Unnormalised next-token logits for each position, and the updated cache (or
+            `None` if no cache was given).
         """
-        hidden = self.model(input_ids, jnp.arange(input_ids.shape[0]))
+        start = 0 if cache is None else cache.length
+        positions = start + jnp.arange(input_ids.shape[0])
+        layer_caches = None if cache is None else cache.layers
+        hidden, layer_caches = self.model(input_ids, positions, layer_caches)
+
         if self.lm_head is None:
-            return hidden @ self.model.embed_tokens.weight.T
-        return jax.vmap(self.lm_head)(hidden)
+            logits = hidden @ self.model.embed_tokens.weight.T
+        else:
+            logits = jax.vmap(self.lm_head)(hidden)
+
+        if cache is not None:
+            cache = Cache(layers=layer_caches, length=cache.length + input_ids.shape[0])
+        return logits, cache
+
+    def init_cache(self, max_len: int) -> Cache:
+        """Allocate an empty key/value cache.
+
+        Args:
+            max_len: Maximum total number of tokens (prompt plus generated) it can hold.
+
+        Returns:
+            An empty cache in the model's parameter dtype.
+        """
+        c = self.config
+        dtype = self.model.embed_tokens.weight.dtype
+        empty = KVCache.empty(max_len, c.num_key_value_heads, c.head_dim, dtype)
+        return Cache(layers=[empty] * c.num_hidden_layers, length=jnp.array(0, dtype=jnp.int32))
 
     @classmethod
     def from_pretrained(
