@@ -32,6 +32,6 @@ def hf_weight():
 @pytest.fixture(scope="session")
 def model():
     """Qwen3-0.6B in float32, loaded once per test session."""
-    from eqx_zoo import Qwen3ForCausalLM
+    from eqx_zoo import CausalLM
 
-    return Qwen3ForCausalLM.from_pretrained(REPO_ID, dtype=jnp.float32)
+    return CausalLM.from_pretrained(REPO_ID, dtype=jnp.float32)
