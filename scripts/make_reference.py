@@ -52,13 +52,19 @@ def main():
     print(f"prompt: {PROMPT!r}")
     print(f"token ids: {ids[0].tolist()}")
     print(f"saved {len(acts) + 2} arrays to {OUT}")
-    for k in ["embed", "layer0.self_attn.q_norm", "layer0.self_attn.k_norm", "layer0", "final_norm"]:
+    for k in [
+        "embed",
+        "layer0.self_attn.q_norm",
+        "layer0.self_attn.k_norm",
+        "layer0",
+        "final_norm",
+    ]:
         print(f"  {k:28s} {acts[k].shape}")
     print(f"  {'logits':28s} {tuple(logits.shape)}")
 
     top = torch.topk(logits[0, -1], 5)
     print("top-5 next tokens:")
-    for p, i in zip(torch.softmax(logits[0, -1], -1)[top.indices], top.indices):
+    for p, i in zip(torch.softmax(logits[0, -1], -1)[top.indices], top.indices, strict=True):
         print(f"  {tok.decode([int(i)])!r:14s} p={p:.3f}")
 
 

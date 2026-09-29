@@ -1,26 +1,54 @@
-"""Building blocks shared across model families."""
+"""Building blocks shared across model families.
+
+All modules operate on a single, unbatched sequence; use `jax.vmap` to batch them.
+Attribute names mirror the corresponding Hugging Face checkpoint parameters so that
+pretrained weights can be loaded by name.
+"""
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float, Int, PRNGKeyArray
+from jaxtyping import Array, DTypeLike, Float, Int, PRNGKeyArray
+
+
+def _linear(in_dim: int, out_dim: int, *, key: PRNGKeyArray, dtype: DTypeLike) -> eqx.nn.Linear:
+    return eqx.nn.Linear(in_dim, out_dim, use_bias=False, key=key, dtype=dtype)
 
 
 class RMSNorm(eqx.Module):
-    """Root-mean-square layer norm over the last axis.
+    """Root-mean-square layer normalisation over the last axis.
 
-    Normalisation is computed in float32 and cast back to the input dtype before
+    The normalisation is computed in float32 and cast back to the input dtype before
     scaling, matching the Hugging Face reference implementation.
+
+    Attributes:
+        weight: Learnable per-feature scale.
+        eps: Constant added to the mean square for numerical stability.
     """
 
     weight: Float[Array, " dim"]
     eps: float = eqx.field(static=True)
 
-    def __init__(self, dim: int, eps: float = 1e-6, dtype=jnp.float32):
+    def __init__(self, dim: int, eps: float = 1e-6, dtype: DTypeLike = jnp.float32):
+        """Create a norm with its scale initialised to ones.
+
+        Args:
+            dim: Size of the normalised (last) axis.
+            eps: Constant added to the mean square for numerical stability.
+            dtype: Parameter dtype.
+        """
         self.weight = jnp.ones(dim, dtype=dtype)
         self.eps = eps
 
     def __call__(self, x: Float[Array, "*batch dim"]) -> Float[Array, "*batch dim"]:
+        """Normalise `x` over its last axis.
+
+        Args:
+            x: Input with any number of leading axes.
+
+        Returns:
+            The normalised and scaled input, in the input dtype.
+        """
         dtype = x.dtype
         x = x.astype(jnp.float32)
         x = x * jax.lax.rsqrt(jnp.mean(x**2, axis=-1, keepdims=True) + self.eps)
@@ -28,26 +56,61 @@ class RMSNorm(eqx.Module):
 
 
 class SwiGLU(eqx.Module):
-    """Gated feed-forward block: ``down(silu(gate(x)) * up(x))``."""
+    """Gated feed-forward block computing `down(silu(gate(x)) * up(x))`.
+
+    Attributes:
+        gate_proj: Projection to the hidden dimension, passed through SiLU.
+        up_proj: Projection to the hidden dimension, multiplied with the gate.
+        down_proj: Projection back to the model dimension.
+    """
 
     gate_proj: eqx.nn.Linear
     up_proj: eqx.nn.Linear
     down_proj: eqx.nn.Linear
 
-    def __init__(self, dim: int, hidden_dim: int, *, key: PRNGKeyArray, dtype=jnp.float32):
+    def __init__(
+        self, dim: int, hidden_dim: int, *, key: PRNGKeyArray, dtype: DTypeLike = jnp.float32
+    ):
+        """Create a randomly initialised block.
+
+        Args:
+            dim: Model (input and output) dimension.
+            hidden_dim: Inner dimension of the gated projection.
+            key: PRNG key for parameter initialisation.
+            dtype: Parameter dtype.
+        """
         gate_key, up_key, down_key = jax.random.split(key, 3)
-        self.gate_proj = eqx.nn.Linear(dim, hidden_dim, use_bias=False, key=gate_key, dtype=dtype)
-        self.up_proj = eqx.nn.Linear(dim, hidden_dim, use_bias=False, key=up_key, dtype=dtype)
-        self.down_proj = eqx.nn.Linear(hidden_dim, dim, use_bias=False, key=down_key, dtype=dtype)
+        self.gate_proj = _linear(dim, hidden_dim, key=gate_key, dtype=dtype)
+        self.up_proj = _linear(dim, hidden_dim, key=up_key, dtype=dtype)
+        self.down_proj = _linear(hidden_dim, dim, key=down_key, dtype=dtype)
 
     def __call__(self, x: Float[Array, " dim"]) -> Float[Array, " dim"]:
+        """Apply the block to a single token.
+
+        Args:
+            x: One token's hidden state.
+
+        Returns:
+            The transformed hidden state.
+        """
         return self.down_proj(jax.nn.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
 def rope_cos_sin(
     positions: Int[Array, " seq"], head_dim: int, theta: float
 ) -> tuple[Float[Array, "seq head_dim"], Float[Array, "seq head_dim"]]:
-    """Rotary embedding tables in the rotate-half layout, computed in float32."""
+    """Compute rotary embedding tables in the rotate-half layout.
+
+    Frequencies are computed in float32 regardless of the model dtype.
+
+    Args:
+        positions: Absolute position of each token.
+        head_dim: Per-head dimension; must be even.
+        theta: RoPE base frequency.
+
+    Returns:
+        The cosine and sine tables, one row per position.
+    """
     inv_freq = 1.0 / theta ** (jnp.arange(0, head_dim, 2, dtype=jnp.float32) / head_dim)
     freqs = positions.astype(jnp.float32)[:, None] * inv_freq[None, :]
     angles = jnp.concatenate([freqs, freqs], axis=-1)
@@ -59,7 +122,19 @@ def apply_rope(
     cos: Float[Array, "seq head_dim"],
     sin: Float[Array, "seq head_dim"],
 ) -> Float[Array, "seq heads head_dim"]:
-    """Rotate ``x`` by position, pairing dimension ``i`` with ``i + head_dim // 2``."""
+    """Rotate each head of `x` by its token's position.
+
+    Uses the rotate-half layout, pairing dimension `i` with `i + head_dim // 2`, as in
+    Hugging Face transformers (not the interleaved layout of the original RoPE paper).
+
+    Args:
+        x: Per-head queries or keys.
+        cos: Cosine table from `rope_cos_sin`.
+        sin: Sine table from `rope_cos_sin`.
+
+    Returns:
+        The rotated input, in the input dtype.
+    """
     cos = cos.astype(x.dtype)[:, None, :]
     sin = sin.astype(x.dtype)[:, None, :]
     x1, x2 = jnp.split(x, 2, axis=-1)
@@ -68,7 +143,23 @@ def apply_rope(
 
 
 class Attention(eqx.Module):
-    """Causal grouped-query attention with per-head query/key RMSNorm and RoPE."""
+    """Causal grouped-query attention with per-head query/key RMSNorm and RoPE.
+
+    Queries and keys are normalised per head before the rotary embedding is applied.
+    Each key/value head is shared by `num_heads // num_kv_heads` consecutive query heads.
+
+    Attributes:
+        q_proj: Query projection to `num_heads * head_dim`.
+        k_proj: Key projection to `num_kv_heads * head_dim`.
+        v_proj: Value projection to `num_kv_heads * head_dim`.
+        o_proj: Output projection back to the model dimension.
+        q_norm: RMSNorm applied to each query head.
+        k_norm: RMSNorm applied to each key head.
+        num_heads: Number of query heads.
+        num_kv_heads: Number of key/value heads.
+        head_dim: Per-head dimension.
+        rope_theta: RoPE base frequency.
+    """
 
     q_proj: eqx.nn.Linear
     k_proj: eqx.nn.Linear
@@ -91,15 +182,30 @@ class Attention(eqx.Module):
         rope_theta: float,
         eps: float,
         key: PRNGKeyArray,
-        dtype=jnp.float32,
+        dtype: DTypeLike = jnp.float32,
     ):
+        """Create a randomly initialised attention block.
+
+        Args:
+            dim: Model (input and output) dimension.
+            num_heads: Number of query heads.
+            num_kv_heads: Number of key/value heads; must divide `num_heads`.
+            head_dim: Per-head dimension; independent of `dim // num_heads`.
+            rope_theta: RoPE base frequency.
+            eps: Epsilon for the query/key RMSNorms.
+            key: PRNG key for parameter initialisation.
+            dtype: Parameter dtype.
+
+        Raises:
+            ValueError: If `num_kv_heads` does not divide `num_heads`.
+        """
         if num_heads % num_kv_heads:
             raise ValueError("num_heads must be divisible by num_kv_heads")
         q_key, k_key, v_key, o_key = jax.random.split(key, 4)
-        self.q_proj = eqx.nn.Linear(dim, num_heads * head_dim, use_bias=False, key=q_key, dtype=dtype)
-        self.k_proj = eqx.nn.Linear(dim, num_kv_heads * head_dim, use_bias=False, key=k_key, dtype=dtype)
-        self.v_proj = eqx.nn.Linear(dim, num_kv_heads * head_dim, use_bias=False, key=v_key, dtype=dtype)
-        self.o_proj = eqx.nn.Linear(num_heads * head_dim, dim, use_bias=False, key=o_key, dtype=dtype)
+        self.q_proj = _linear(dim, num_heads * head_dim, key=q_key, dtype=dtype)
+        self.k_proj = _linear(dim, num_kv_heads * head_dim, key=k_key, dtype=dtype)
+        self.v_proj = _linear(dim, num_kv_heads * head_dim, key=v_key, dtype=dtype)
+        self.o_proj = _linear(num_heads * head_dim, dim, key=o_key, dtype=dtype)
         self.q_norm = RMSNorm(head_dim, eps=eps, dtype=dtype)
         self.k_norm = RMSNorm(head_dim, eps=eps, dtype=dtype)
         self.num_heads = num_heads
@@ -110,6 +216,15 @@ class Attention(eqx.Module):
     def __call__(
         self, x: Float[Array, "seq dim"], positions: Int[Array, " seq"]
     ) -> Float[Array, "seq dim"]:
+        """Attend causally over a sequence.
+
+        Args:
+            x: Hidden states for each token.
+            positions: Absolute position of each token, used for the rotary embedding.
+
+        Returns:
+            The attention output for each token, before the residual connection.
+        """
         seq = x.shape[0]
         q = jax.vmap(self.q_proj)(x).reshape(seq, self.num_heads, self.head_dim)
         k = jax.vmap(self.k_proj)(x).reshape(seq, self.num_kv_heads, self.head_dim)
@@ -123,7 +238,7 @@ class Attention(eqx.Module):
         k = jnp.repeat(k, groups, axis=1)
         v = jnp.repeat(v, groups, axis=1)
 
-        scores = jnp.einsum("qhd,khd->hqk", q, k) / jnp.sqrt(self.head_dim).astype(q.dtype)
+        scores = jnp.einsum("qhd,khd->hqk", q, k) * self.head_dim**-0.5
         causal = jnp.tril(jnp.ones((seq, seq), dtype=bool))
         scores = jnp.where(causal, scores, jnp.finfo(scores.dtype).min)
         probs = jax.nn.softmax(scores.astype(jnp.float32), axis=-1).astype(v.dtype)
