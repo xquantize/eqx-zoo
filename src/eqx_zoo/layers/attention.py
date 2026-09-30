@@ -66,12 +66,12 @@ class Cache(eqx.Module):
     """Key/value caches for every layer of a decoder, and which slots hold real tokens.
 
     Attributes:
-        layers: One `KVCache` per decoder layer.
+        layers: Key/value cache of every decoder layer, stacked along a leading axis.
         length: Number of slots written so far, i.e. the slot of the next token.
         valid: Whether each slot holds a real token rather than padding.
     """
 
-    layers: list[KVCache]
+    layers: KVCache
     length: Int[Array, ""]
     valid: Bool[Array, " max_len"]
 

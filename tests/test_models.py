@@ -18,8 +18,8 @@ def test_layer_by_layer(case):
     x = model.model.embed_tokens.weight[ids]
     np.testing.assert_array_equal(x, ref["embed"])
 
-    for i, layer in enumerate(model.model.layers):
-        x, _ = layer(x, positions, mask)
+    for i in range(model.config.num_hidden_layers):
+        x, _ = model.model.layer(i)(x, positions, mask)
         np.testing.assert_allclose(x, ref[f"layer{i}"], **TOL, err_msg=f"{case.name}: layer {i}")
 
     np.testing.assert_allclose(model.model.norm(x), ref["final_norm"], **TOL)

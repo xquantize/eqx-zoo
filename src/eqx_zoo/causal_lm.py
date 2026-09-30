@@ -94,14 +94,18 @@ class DecoderLayer(eqx.Module):
 class DecoderModel(eqx.Module):
     """Decoder stack: token embedding, decoder layers and a final norm.
 
+    The decoder layers are stored as a single `DecoderLayer` whose arrays carry a leading
+    layer axis, and are applied with `jax.lax.scan`, so the layer is compiled only once.
+    Use `layer(i)` to get an individual layer.
+
     Attributes:
         embed_tokens: Token embedding table.
-        layers: Decoder layers, applied in order.
+        layers: All decoder layers, stacked along a leading axis.
         norm: Final RMSNorm.
     """
 
     embed_tokens: eqx.nn.Embedding
-    layers: list[DecoderLayer]
+    layers: DecoderLayer
     norm: RMSNorm
 
     def __init__(self, config: Config, *, key: PRNGKeyArray, dtype: DTypeLike = jnp.float32):
@@ -112,44 +116,59 @@ class DecoderModel(eqx.Module):
             key: PRNG key for parameter initialisation.
             dtype: Parameter dtype.
         """
-        embed_key, *layer_keys = jax.random.split(key, config.num_hidden_layers + 1)
+        embed_key, layers_key = jax.random.split(key)
         self.embed_tokens = eqx.nn.Embedding(
             config.vocab_size, config.hidden_size, key=embed_key, dtype=dtype
         )
-        self.layers = [DecoderLayer(config, key=k, dtype=dtype) for k in layer_keys]
+        make_layer = lambda k: DecoderLayer(config, key=k, dtype=dtype)  # noqa: E731
+        layer_keys = jax.random.split(layers_key, config.num_hidden_layers)
+        self.layers = eqx.filter_vmap(make_layer)(layer_keys)
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, dtype=dtype)
+
+    def layer(self, i: int) -> DecoderLayer:
+        """Return decoder layer `i` as an ordinary, unstacked `DecoderLayer`."""
+        return jax.tree.map(lambda x: x[i], self.layers)
 
     def __call__(
         self,
         input_ids: Int[Array, " seq"],
         positions: Int[Array, " seq"],
         mask: Bool[Array, "seq keys"],
-        caches: list[KVCache] | None = None,
+        caches: KVCache | None = None,
         cache_index: Int[Array, ""] | None = None,
-    ) -> tuple[Float[Array, "seq dim"], list[KVCache] | None]:
+    ) -> tuple[Float[Array, "seq dim"], KVCache | None]:
         """Compute final hidden states.
 
         Args:
             input_ids: Token ids.
             positions: Position of each token, used for the rotary embedding.
             mask: Attention mask; see `Attention`.
-            caches: One key/value cache per layer, or `None`.
+            caches: Key/value caches of every layer, stacked along a leading axis, or `None`.
             cache_index: Cache slot for the first token; required with caches.
 
         Returns:
             Normalised hidden states for each token, and the updated caches (or `None`).
         """
         x = self.embed_tokens.weight[input_ids]
+        params, static = eqx.partition(self.layers, eqx.is_array)
+
         if caches is None:
-            for layer in self.layers:
-                x, _ = layer(x, positions, mask)
+
+            def step(x, layer_params):
+                x, _ = eqx.combine(layer_params, static)(x, positions, mask)
+                return x, None
+
+            x, _ = jax.lax.scan(step, x, params)
             return self.norm(x), None
 
-        new_caches = []
-        for layer, cache in zip(self.layers, caches, strict=True):
+        def step_cached(x, layer_inputs):
+            layer_params, cache = layer_inputs
+            layer = eqx.combine(layer_params, static)
             x, cache = layer(x, positions, mask, cache, cache_index)
-            new_caches.append(cache)
-        return self.norm(x), new_caches
+            return x, cache
+
+        x, caches = jax.lax.scan(step_cached, x, (params, caches))
+        return self.norm(x), caches
 
 
 class CausalLM(eqx.Module):
@@ -242,9 +261,9 @@ class CausalLM(eqx.Module):
         """
         c = self.config
         dtype = self.model.embed_tokens.weight.dtype
-        empty = KVCache.empty(max_len, c.num_key_value_heads, c.head_dim, dtype)
+        shape = (c.num_hidden_layers, max_len, c.num_key_value_heads, c.head_dim)
         return Cache(
-            layers=[empty] * c.num_hidden_layers,
+            layers=KVCache(k=jnp.zeros(shape, dtype=dtype), v=jnp.zeros(shape, dtype=dtype)),
             length=jnp.array(0, dtype=jnp.int32),
             valid=jnp.zeros(max_len, dtype=bool),
         )
@@ -285,4 +304,9 @@ class CausalLM(eqx.Module):
         config = Config.from_hf(json.loads((path / "config.json").read_text()))
         skeleton = eqx.filter_eval_shape(cls, config, key=jax.random.key(0), dtype=dtype)
         ignore = ["lm_head.weight"] if config.tie_word_embeddings else []
-        return load_safetensors(skeleton, sorted(path.glob("*.safetensors")), ignore=ignore)
+        return load_safetensors(
+            skeleton,
+            sorted(path.glob("*.safetensors")),
+            ignore=ignore,
+            stacked=["model.layers"],
+        )

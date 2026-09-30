@@ -31,8 +31,15 @@ def rms(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def forward(model, ids, *, jit: bool = True) -> np.ndarray:
+    """Logits in float32; with `jit=False`, every operation runs individually."""
     fn = lambda m, x: m(x)[0]  # noqa: E731
-    logits = (eqx.filter_jit(fn) if jit else fn)(model, ids)
+    if jit:
+        logits = eqx.filter_jit(fn)(model, ids)
+    else:
+        # `jax.lax.scan` compiles its body even outside `jit`; disabling JIT runs the
+        # layers as a Python loop, so this path is genuinely op-by-op.
+        with jax.disable_jit():
+            logits = fn(model, ids)
     return np.asarray(logits.astype(jnp.float32))
 
 
