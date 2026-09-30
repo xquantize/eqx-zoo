@@ -43,9 +43,15 @@ dev = [
 ]
 
 [tool.uv]
-# Released transformers versions require huggingface-hub < 2. This only affects our
-# lockfile; it is not part of the published package metadata.
-constraint-dependencies = ["huggingface-hub<2"]
+constraint-dependencies = [
+    # Released transformers versions require huggingface-hub < 2. This only affects our
+    # lockfile; it is not part of the published package metadata.
+    "huggingface-hub<2",
+    # On the PyTorch CPU index, x86-64 Linux wheels are versioned `X.Y.Z+cpu`, and plain
+    # `X.Y.Z` has no wheel for that platform. Pin the variant so that
+    # `--resolution lowest-direct` can't select an uninstallable one.
+    "torch==2.14.0+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
