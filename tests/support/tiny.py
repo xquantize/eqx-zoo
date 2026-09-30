@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from support.reference import capture_model
+from support.reference import bf16_logits, capture_model
 from support.registry import TINY_MODELS
 
 # Shared by every tiny model; per-model overrides live in `TINY_MODELS`.
@@ -41,4 +41,5 @@ def build(name: str, directory: Path) -> dict[str, np.ndarray]:
                 param.copy_(0.05 * torch.randn_like(param))
 
     model.save_pretrained(directory)
-    return capture_model(model.eval(), torch.tensor([PROMPT_IDS]))
+    ids = torch.tensor([PROMPT_IDS])
+    return {**capture_model(model.eval(), ids), "bf16_logits": bf16_logits(model, ids)}

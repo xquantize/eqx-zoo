@@ -14,7 +14,9 @@ def capture(repo_id: str) -> dict[str, np.ndarray]:
     # Cast after loading rather than passing a dtype: the keyword is `torch_dtype` in older
     # transformers and `dtype` in newer ones. Upcasting the stored weights is exact.
     model = AutoModelForCausalLM.from_pretrained(repo_id, attn_implementation="eager")
-    return capture_model(model.float().eval(), tok(PROMPT, return_tensors="pt").input_ids)
+    model = model.float().eval()
+    ids = tok(PROMPT, return_tensors="pt").input_ids
+    return {**capture_model(model, ids), "bf16_logits": bf16_logits(model, ids)}
 
 
 def capture_model(model, input_ids) -> dict[str, np.ndarray]:
@@ -66,3 +68,12 @@ def capture_model(model, input_ids) -> dict[str, np.ndarray]:
         "generated": out[0, input_ids.shape[1] :].numpy(),
         **acts,
     }
+
+
+def bf16_logits(model, input_ids) -> np.ndarray:
+    """Logits after casting `model` to bfloat16 in place: the yardstick for bf16 accuracy."""
+    import torch
+
+    model = model.to(torch.bfloat16)
+    with torch.no_grad():
+        return model(input_ids).logits[0].float().numpy()
