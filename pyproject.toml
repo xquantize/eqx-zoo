@@ -39,7 +39,7 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.9",
     "torch>=2.14.0",
-    "transformers>=4.51",
+    "transformers>=4.51.3",
 ]
 
 [tool.uv]
