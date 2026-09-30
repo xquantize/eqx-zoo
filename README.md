@@ -39,6 +39,22 @@ print(tokenizer.decode(tokens.tolist()))
 # Paris. The capital of Italy is Rome. The capital of Spain is Madrid. ...
 ```
 
+## Batched generation
+
+Prompts of different lengths are left-padded and generated together. With greedy decoding, each row is identical to generating that prompt on its own.
+
+```python
+from eqx_zoo import generate_batch
+
+tokenizer.enable_padding(direction="left")
+prompts = ["The capital of France is", "The largest planet in the solar system is"]
+batch = tokenizer.encode_batch(prompts)
+
+ids = jnp.array([e.ids for e in batch])
+mask = jnp.array([e.attention_mask for e in batch])
+tokens = generate_batch(model, ids, mask, max_new_tokens=20)
+```
+
 ## Models
 
 Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained`, from the Hugging Face Hub or a local directory. These checkpoints are verified by the test suite:
