@@ -184,29 +184,42 @@ class CausalLM(eqx.Module):
         self.config = config
 
     def __call__(
-        self, input_ids: Int[Array, " seq"], cache: Cache | None = None
+        self,
+        input_ids: Int[Array, " seq"],
+        cache: Cache | None = None,
+        attention_mask: Bool[Array, " seq"] | Int[Array, " seq"] | None = None,
     ) -> tuple[Float[Array, "seq vocab"], Cache | None]:
         """Compute next-token logits, optionally continuing from a cache.
 
         Args:
-            input_ids: Token ids. Without a cache they start at position 0; with a cache
-                they continue from position `cache.length`.
+            input_ids: Token ids.
             cache: State from earlier calls, created with `init_cache`, or `None`.
+            attention_mask: `1` or `True` for real tokens and `0` or `False` for padding, as
+                produced by tokenizers. Padding is ignored by attention and does not advance
+                positions; the logits at padding tokens are unspecified. Defaults to all real.
 
         Returns:
             Unnormalised next-token logits for each position, and the updated cache (or
             `None` if no cache was given).
         """
         seq = input_ids.shape[0]
+        if attention_mask is None:
+            valid = jnp.ones(seq, dtype=bool)
+        else:
+            valid = attention_mask.astype(bool)
+
         if cache is None:
             slots = jnp.arange(seq)
-            mask = causal_mask(slots, slots)
-            hidden, layer_caches = self.model(input_ids, slots, mask)
+            positions = jnp.maximum(jnp.cumsum(valid) - 1, 0)
+            mask = causal_mask(slots, slots, valid)
+            hidden, layer_caches = self.model(input_ids, positions, mask)
         else:
             slots = cache.length + jnp.arange(seq)
-            mask = causal_mask(slots, jnp.arange(cache.layers[0].k.shape[0]))
+            positions = jnp.maximum(cache.valid.sum() + jnp.cumsum(valid) - 1, 0)
+            key_valid = jax.lax.dynamic_update_slice(cache.valid, valid, (cache.length,))
+            mask = causal_mask(slots, jnp.arange(key_valid.shape[0]), key_valid)
             hidden, layer_caches = self.model(
-                input_ids, slots, mask, cache.layers, cache_index=cache.length
+                input_ids, positions, mask, cache.layers, cache_index=cache.length
             )
 
         if self.lm_head is None:
@@ -215,7 +228,7 @@ class CausalLM(eqx.Module):
             logits = jax.vmap(self.lm_head)(hidden)
 
         if cache is not None:
-            cache = Cache(layers=layer_caches, length=cache.length + input_ids.shape[0])
+            cache = Cache(layers=layer_caches, length=cache.length + seq, valid=key_valid)
         return logits, cache
 
     def init_cache(self, max_len: int) -> Cache:
@@ -230,7 +243,11 @@ class CausalLM(eqx.Module):
         c = self.config
         dtype = self.model.embed_tokens.weight.dtype
         empty = KVCache.empty(max_len, c.num_key_value_heads, c.head_dim, dtype)
-        return Cache(layers=[empty] * c.num_hidden_layers, length=jnp.array(0, dtype=jnp.int32))
+        return Cache(
+            layers=[empty] * c.num_hidden_layers,
+            length=jnp.array(0, dtype=jnp.int32),
+            valid=jnp.zeros(max_len, dtype=bool),
+        )
 
     @classmethod
     def from_pretrained(

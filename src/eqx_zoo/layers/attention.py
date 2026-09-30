@@ -63,30 +63,36 @@ class KVCache(eqx.Module):
 
 
 class Cache(eqx.Module):
-    """Key/value caches for every layer of a decoder, plus the number of tokens seen.
+    """Key/value caches for every layer of a decoder, and which slots hold real tokens.
 
     Attributes:
         layers: One `KVCache` per decoder layer.
-        length: Number of tokens processed so far, i.e. the position of the next token.
+        length: Number of slots written so far, i.e. the slot of the next token.
+        valid: Whether each slot holds a real token rather than padding.
     """
 
     layers: list[KVCache]
     length: Int[Array, ""]
+    valid: Bool[Array, " max_len"]
 
 
 def causal_mask(
-    query_slots: Int[Array, " seq"], key_slots: Int[Array, " keys"]
+    query_slots: Int[Array, " seq"],
+    key_slots: Int[Array, " keys"],
+    key_valid: Bool[Array, " keys"] | None = None,
 ) -> Bool[Array, "seq keys"]:
     """Mask allowing each query to attend to keys in the same or earlier slots.
 
     Args:
         query_slots: Slot of each query token.
         key_slots: Slot of each key.
+        key_valid: Optional; keys marked `False`, e.g. padding, are masked out.
 
     Returns:
         `True` where a query may attend to a key.
     """
-    return key_slots[None, :] <= query_slots[:, None]
+    mask = key_slots[None, :] <= query_slots[:, None]
+    return mask if key_valid is None else mask & key_valid[None, :]
 
 
 class Attention(eqx.Module):
