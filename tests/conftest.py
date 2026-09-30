@@ -21,6 +21,7 @@ _CHECKPOINT_FIXTURES = {"qwen3_reference", "qwen3_weight"}
 @dataclasses.dataclass(frozen=True)
 class Case:
     name: str
+    source: str
     model: CausalLM
     reference: dict[str, np.ndarray]
 
@@ -75,7 +76,13 @@ def case(request, get_reference, tmp_path_factory) -> Case:
     else:
         reference = get_reference(name)
         source = CHECKPOINTS[name]
-    return Case(name, CausalLM.from_pretrained(source, dtype=jnp.float32), reference)
+    return Case(name, source, CausalLM.from_pretrained(source, dtype=jnp.float32), reference)
+
+
+@pytest.fixture(scope="session")
+def bf16_model(case) -> CausalLM:
+    """The same model as `case`, loaded in bfloat16 as a user would."""
+    return CausalLM.from_pretrained(case.source, dtype=jnp.bfloat16)
 
 
 @pytest.fixture(scope="session")
