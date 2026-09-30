@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/banner.png" alt="eqx-zoo: verified Equinox ports of pretrained models" width="100%">
+  <img src="https://raw.githubusercontent.com/xquantize/eqx-zoo/main/assets/banner.png" alt="eqx-zoo: verified Equinox ports of pretrained models" width="100%">
 </p>
 
 <p align="center">
 <a href="https://github.com/xquantize/eqx-zoo/actions/workflows/ci.yml"><img src="https://github.com/xquantize/eqx-zoo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://pypi.org/project/eqx-zoo/"><img src="https://img.shields.io/pypi/v/eqx-zoo" alt="PyPI"></a>
-<a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+<a href="https://github.com/xquantize/eqx-zoo/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
 <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
 <a href="https://github.com/patrick-kidger/equinox"><img src="https://img.shields.io/badge/built%20with-Equinox-8b5cf6" alt="Built with Equinox"></a>
 </p>
@@ -70,7 +70,7 @@ Each verified checkpoint is tested against Hugging Face activations in two tiers
 - **float32:** every layer's output must match, and greedy generation must reproduce the reference output token for token.
 - **bfloat16:** logits must be about as accurate as Hugging Face's own bfloat16, measured against its float32 output. Exact greedy agreement isn't required in bf16, since it drifts even between Hugging Face's own bf16 and float32 runs.
 
-Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](tests).
+Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](https://github.com/xquantize/eqx-zoo/tree/main/tests).
 
 ## Development
 
@@ -82,7 +82,7 @@ uv run pytest                       # full: also downloads and verifies checkpoi
 uv run python benchmarks/generation.py Qwen/Qwen3-0.6B   # load, compile and throughput
 ```
 
-Contributions are welcome. [`AGENTS.md`](AGENTS.md) describes the conventions every model follows.
+Contributions are welcome. [`AGENTS.md`](https://github.com/xquantize/eqx-zoo/blob/main/AGENTS.md) describes the conventions every model follows.
 
 ## See also
 
