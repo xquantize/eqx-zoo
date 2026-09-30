@@ -47,6 +47,14 @@ dev = [
 # lockfile; it is not part of the published package metadata.
 constraint-dependencies = ["huggingface-hub<2"]
 
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

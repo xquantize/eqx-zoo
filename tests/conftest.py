@@ -60,8 +60,9 @@ def get_reference(request):
 def case(request, get_reference) -> Case:
     """Each registered model in float32, with its reference activations."""
     name = request.param
+    reference = get_reference(name)  # capture first, so the HF model is freed before ours loads
     model = CausalLM.from_pretrained(MODELS[name], dtype=jnp.float32)
-    return Case(name, model, get_reference(name))
+    return Case(name, model, reference)
 
 
 @pytest.fixture(scope="session")
