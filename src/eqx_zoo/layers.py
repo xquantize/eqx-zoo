@@ -5,6 +5,8 @@ Attribute names mirror the corresponding Hugging Face checkpoint parameters so t
 pretrained weights can be loaded by name.
 """
 
+import dataclasses
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -98,23 +100,75 @@ class SwiGLU(eqx.Module):
         return self.down_proj(jax.nn.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
-def rope_cos_sin(
-    positions: Int[Array, " seq"], head_dim: int, theta: float
-) -> tuple[Float[Array, "seq head_dim"], Float[Array, "seq head_dim"]]:
-    """Compute rotary embedding tables in the rotate-half layout.
+@dataclasses.dataclass(frozen=True)
+class Llama3RopeScaling:
+    """Llama 3 RoPE frequency scaling for extended context lengths.
 
-    Frequencies are computed in float32 regardless of the model dtype.
+    Low frequencies are divided by `factor`, high frequencies are unchanged, and the band
+    in between is smoothly interpolated.
+
+    Attributes:
+        factor: Divisor applied to the lowest frequencies.
+        low_freq_factor: Sets the wavelength above which frequencies are fully scaled.
+        high_freq_factor: Sets the wavelength below which frequencies are unchanged.
+        original_max_position_embeddings: Context length the model was pretrained with.
+    """
+
+    factor: float
+    low_freq_factor: float
+    high_freq_factor: float
+    original_max_position_embeddings: int
+
+
+def rope_inv_freq(
+    head_dim: int, theta: float, scaling: Llama3RopeScaling | None = None
+) -> Float[Array, " half_head_dim"]:
+    """Compute RoPE inverse frequencies in float32, optionally with Llama 3 scaling.
+
+    Args:
+        head_dim: Per-head dimension; must be even.
+        theta: RoPE base frequency.
+        scaling: Optional Llama 3 frequency scaling.
+
+    Returns:
+        One inverse frequency per pair of rotated dimensions.
+    """
+    inv_freq = 1.0 / theta ** (jnp.arange(0, head_dim, 2, dtype=jnp.float32) / head_dim)
+    if scaling is None:
+        return inv_freq
+
+    context = scaling.original_max_position_embeddings
+    low_freq_wavelen = context / scaling.low_freq_factor
+    high_freq_wavelen = context / scaling.high_freq_factor
+    wavelen = 2 * jnp.pi / inv_freq
+
+    scaled = jnp.where(wavelen > low_freq_wavelen, inv_freq / scaling.factor, inv_freq)
+    smooth = (context / wavelen - scaling.low_freq_factor) / (
+        scaling.high_freq_factor - scaling.low_freq_factor
+    )
+    smoothed = (1 - smooth) * scaled / scaling.factor + smooth * scaled
+    medium = (wavelen >= high_freq_wavelen) & (wavelen <= low_freq_wavelen)
+    return jnp.where(medium, smoothed, scaled)
+
+
+def rope_cos_sin(
+    positions: Int[Array, " seq"],
+    head_dim: int,
+    theta: float,
+    scaling: Llama3RopeScaling | None = None,
+) -> tuple[Float[Array, "seq head_dim"], Float[Array, "seq head_dim"]]:
+    """Compute rotary embedding tables in the rotate-half layout, in float32.
 
     Args:
         positions: Absolute position of each token.
         head_dim: Per-head dimension; must be even.
         theta: RoPE base frequency.
+        scaling: Optional Llama 3 frequency scaling.
 
     Returns:
         The cosine and sine tables, one row per position.
     """
-    inv_freq = 1.0 / theta ** (jnp.arange(0, head_dim, 2, dtype=jnp.float32) / head_dim)
-    freqs = positions.astype(jnp.float32)[:, None] * inv_freq[None, :]
+    freqs = positions.astype(jnp.float32)[:, None] * rope_inv_freq(head_dim, theta, scaling)
     angles = jnp.concatenate([freqs, freqs], axis=-1)
     return jnp.cos(angles), jnp.sin(angles)
 
@@ -225,6 +279,7 @@ class Attention(eqx.Module):
         num_kv_heads: Number of key/value heads.
         head_dim: Per-head dimension.
         rope_theta: RoPE base frequency.
+        rope_scaling: RoPE frequency scaling, or None.
     """
 
     q_proj: eqx.nn.Linear
@@ -237,6 +292,7 @@ class Attention(eqx.Module):
     num_kv_heads: int = eqx.field(static=True)
     head_dim: int = eqx.field(static=True)
     rope_theta: float = eqx.field(static=True)
+    rope_scaling: Llama3RopeScaling | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -246,6 +302,7 @@ class Attention(eqx.Module):
         num_kv_heads: int,
         head_dim: int,
         rope_theta: float,
+        rope_scaling: Llama3RopeScaling | None = None,
         eps: float = 1e-6,
         qkv_bias: bool = False,
         qk_norm: bool = False,
@@ -260,6 +317,7 @@ class Attention(eqx.Module):
             num_kv_heads: Number of key/value heads; must divide `num_heads`.
             head_dim: Per-head dimension; independent of `dim // num_heads`.
             rope_theta: RoPE base frequency.
+            rope_scaling: Optional Llama 3 RoPE frequency scaling.
             eps: Epsilon for the query/key RMSNorms.
             qkv_bias: Whether the query, key and value projections have a bias.
             qk_norm: Whether to apply RMSNorm to each query and key head.
@@ -283,6 +341,7 @@ class Attention(eqx.Module):
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
         self.rope_theta = rope_theta
+        self.rope_scaling = rope_scaling
 
     def __call__(
         self,
@@ -309,7 +368,7 @@ class Attention(eqx.Module):
 
         if self.q_norm is not None and self.k_norm is not None:
             q, k = self.q_norm(q), self.k_norm(k)
-        cos, sin = rope_cos_sin(positions, self.head_dim, self.rope_theta)
+        cos, sin = rope_cos_sin(positions, self.head_dim, self.rope_theta, self.rope_scaling)
         q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
 
         if cache is None:

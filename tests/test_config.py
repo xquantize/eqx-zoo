@@ -49,3 +49,21 @@ def test_rejects_unknown_architecture():
 def test_rejects_unsupported_features(extra):
     with pytest.raises(NotImplementedError):
         Config.from_hf(QWEN3 | extra)
+
+
+def test_llama3_rope_scaling():
+    rope = {
+        "rope_type": "llama3",
+        "factor": 32.0,
+        "low_freq_factor": 1.0,
+        "high_freq_factor": 4.0,
+        "original_max_position_embeddings": 8192,
+    }
+    config = Config.from_hf(QWEN3 | {"architectures": ["LlamaForCausalLM"], "rope_scaling": rope})
+    assert config.rope_scaling is not None and config.rope_scaling.factor == 32.0
+    assert not config.qk_norm and not config.attention_bias
+
+
+def test_rejects_mlp_bias():
+    with pytest.raises(NotImplementedError, match="MLP bias"):
+        Config.from_hf(QWEN3 | {"mlp_bias": True})

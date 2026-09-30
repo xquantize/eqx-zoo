@@ -3,8 +3,11 @@
 import dataclasses
 from typing import Any
 
+from eqx_zoo.layers import Llama3RopeScaling
+
 # Attention features implied by each architecture rather than stated in `config.json`.
 _ARCHITECTURES: dict[str, dict[str, bool]] = {
+    "LlamaForCausalLM": {"attention_bias": False, "qk_norm": False},
     "Qwen2ForCausalLM": {"attention_bias": True, "qk_norm": False},
     "Qwen3ForCausalLM": {"attention_bias": False, "qk_norm": True},
 }
@@ -31,6 +34,7 @@ class Config:
         tie_word_embeddings: Whether the output head reuses the embedding matrix.
         attention_bias: Whether the query, key and value projections have a bias.
         qk_norm: Whether each query and key head is RMS-normalised.
+        rope_scaling: RoPE frequency scaling, or None for standard RoPE.
     """
 
     architecture: str
@@ -46,6 +50,7 @@ class Config:
     tie_word_embeddings: bool
     attention_bias: bool
     qk_norm: bool
+    rope_scaling: Llama3RopeScaling | None
 
     @classmethod
     def from_hf(cls, config: dict[str, Any]) -> "Config":
@@ -70,8 +75,19 @@ class Config:
         # RoPE settings live in `rope_scaling` (transformers 4.x) or `rope_parameters` (5.x).
         rope = config.get("rope_scaling") or config.get("rope_parameters") or {}
         rope_type = rope.get("rope_type", rope.get("type", "default"))
-        if rope_type != "default":
+        if rope_type == "default":
+            rope_scaling = None
+        elif rope_type == "llama3":
+            rope_scaling = Llama3RopeScaling(
+                factor=rope["factor"],
+                low_freq_factor=rope["low_freq_factor"],
+                high_freq_factor=rope["high_freq_factor"],
+                original_max_position_embeddings=rope["original_max_position_embeddings"],
+            )
+        else:
             raise NotImplementedError(f"RoPE scaling type {rope_type!r} is not supported yet")
+        if config.get("mlp_bias", False):
+            raise NotImplementedError("MLP bias is not supported yet")
         if config.get("use_sliding_window", False):
             raise NotImplementedError("sliding-window attention is not supported yet")
         if config.get("hidden_act", "silu") != "silu":
@@ -92,4 +108,5 @@ class Config:
             tie_word_embeddings=config.get("tie_word_embeddings", False),
             attention_bias=config.get("attention_bias", features["attention_bias"]),
             qk_norm=features["qk_norm"],
+            rope_scaling=rope_scaling,
         )

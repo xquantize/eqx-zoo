@@ -16,6 +16,8 @@ from eqx_zoo import CausalLM
 MODELS = {
     "qwen3-0.6b": "Qwen/Qwen3-0.6B",
     "qwen2.5-0.5b": "Qwen/Qwen2.5-0.5B",
+    "smollm2-135m": "HuggingFaceTB/SmolLM2-135M",
+    "llama-3.2-1b": "unsloth/Llama-3.2-1B",
 }
 REFERENCE_DIR = Path(__file__).parents[1] / "reference"
 

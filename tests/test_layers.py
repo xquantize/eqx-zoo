@@ -5,7 +5,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from eqx_zoo.layers import Attention, RMSNorm, SwiGLU, apply_rope, rope_cos_sin
+from eqx_zoo.layers import (
+    Attention,
+    Llama3RopeScaling,
+    RMSNorm,
+    SwiGLU,
+    apply_rope,
+    rope_cos_sin,
+    rope_inv_freq,
+)
 
 HIDDEN = 1024
 INTERMEDIATE = 3072
@@ -54,8 +62,12 @@ def make_attention(qwen3_weight) -> Attention:
 
 
 def test_input_layernorm(qwen3_reference, qwen3_weight):
-    norm = set_weights(RMSNorm(HIDDEN, eps=EPS), qwen3_weight, f"{LAYER0}.input_layernorm", ["weight"])
-    assert_close(norm(jnp.asarray(qwen3_reference["embed"])), qwen3_reference["layer0.input_layernorm"], 1e-5)
+    norm = set_weights(
+        RMSNorm(HIDDEN, eps=EPS), qwen3_weight, f"{LAYER0}.input_layernorm", ["weight"]
+    )
+    assert_close(
+        norm(jnp.asarray(qwen3_reference["embed"])), qwen3_reference["layer0.input_layernorm"], 1e-5
+    )
 
 
 def test_post_attention_layernorm(qwen3_reference, qwen3_weight):
@@ -95,3 +107,19 @@ def test_self_attention(qwen3_reference, qwen3_weight):
     x = jnp.asarray(qwen3_reference["layer0.input_layernorm"])
     out, _ = attn(x, jnp.arange(x.shape[0]))
     assert_close(out, qwen3_reference["layer0.self_attn"], 1e-4)
+
+
+def test_llama3_rope_scaling_bands():
+    scaling = Llama3RopeScaling(
+        factor=32.0,
+        low_freq_factor=1.0,
+        high_freq_factor=4.0,
+        original_max_position_embeddings=8192,
+    )
+    base = rope_inv_freq(64, 500_000.0)
+    scaled = rope_inv_freq(64, 500_000.0, scaling)
+    wavelen = 2 * np.pi / np.asarray(base)
+    high, low = wavelen < 8192 / 4.0, wavelen > 8192 / 1.0
+    assert high.any() and low.any()
+    assert_close(scaled[high], np.asarray(base[high]), 1e-6)  # high frequencies unchanged
+    assert_close(scaled[low], np.asarray(base[low] / 32.0), 1e-6)  # low frequencies scaled
