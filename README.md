@@ -3,11 +3,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xquantize/eqx-zoo/actions/workflows/ci.yml"><img src="https://github.com/xquantize/eqx-zoo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://pypi.org/project/eqx-zoo/"><img src="https://img.shields.io/pypi/v/eqx-zoo" alt="PyPI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
-  <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
-  <a href="https://github.com/patrick-kidger/equinox"><img src="https://img.shields.io/badge/built%20with-Equinox-8b5cf6" alt="Built with Equinox"></a>
+<a href="https://github.com/xquantize/eqx-zoo/actions/workflows/ci.yml"><img src="https://github.com/xquantize/eqx-zoo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://pypi.org/project/eqx-zoo/"><img src="https://img.shields.io/pypi/v/eqx-zoo" alt="PyPI"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+<img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
+<a href="https://github.com/patrick-kidger/equinox"><img src="https://img.shields.io/badge/built%20with-Equinox-8b5cf6" alt="Built with Equinox"></a>
 </p>
 
 eqx-zoo provides pretrained models as plain [Equinox](https://github.com/patrick-kidger/equinox) modules, loaded straight from Hugging Face checkpoints and numerically verified against the reference implementation in 🤗 Transformers.
@@ -41,7 +41,7 @@ print(tokenizer.decode(tokens.tolist()))
 
 ## Models
 
-Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained`. These checkpoints are verified by the test suite:
+Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained`, from the Hugging Face Hub or a local directory. These checkpoints are verified by the test suite:
 
 | Architecture | Verified checkpoints |
 |---|---|
@@ -49,15 +49,15 @@ Any checkpoint with a supported architecture loads with `CausalLM.from_pretraine
 | `Qwen3ForCausalLM` | [Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) |
 | `Qwen2ForCausalLM` | [Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) |
 
-Each verified checkpoint is tested against Hugging Face activations captured in float32: every layer's output must match, and greedy generation must reproduce the reference output token for token. See [`tests/`](tests).
+Each verified checkpoint is tested against Hugging Face activations captured in float32: every layer's output must match, and greedy generation must reproduce the reference output token for token. Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](tests).
 
 ## Development
 
 ```bash
 git clone https://github.com/xquantize/eqx-zoo && cd eqx-zoo
 uv sync
-uv run python scripts/make_reference.py   # capture reference activations
-uv run pytest
+uv run pytest -m "not checkpoint"   # fast: tiny random models, no downloads
+uv run pytest                       # full: also downloads and verifies checkpoints
 ```
 
 Contributions are welcome. [`AGENTS.md`](AGENTS.md) describes the conventions every model follows.
