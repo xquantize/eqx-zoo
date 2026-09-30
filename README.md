@@ -3,6 +3,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/xquantize/eqx-zoo/actions/workflows/ci.yml"><img src="https://github.com/xquantize/eqx-zoo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/eqx-zoo/"><img src="https://img.shields.io/pypi/v/eqx-zoo" alt="PyPI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
   <a href="https://github.com/patrick-kidger/equinox"><img src="https://img.shields.io/badge/built%20with-Equinox-8b5cf6" alt="Built with Equinox"></a>
@@ -15,7 +17,7 @@ Every model is an ordinary pytree, so `jax.jit`, `jax.grad`, `jax.vmap` and the 
 ## Installation
 
 ```bash
-pip install "eqx-zoo @ git+https://github.com/xquantize/eqx-zoo"
+pip install eqx-zoo
 ```
 
 Requires Python 3.12+. The example below also uses `pip install tokenizers`.

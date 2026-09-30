@@ -15,9 +15,10 @@ def capture(repo_id: str) -> dict[str, np.ndarray]:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(repo_id)
-    model = AutoModelForCausalLM.from_pretrained(
-        repo_id, dtype=torch.float32, attn_implementation="eager"
-    ).eval()
+    # Cast after loading rather than passing a dtype: the keyword is `torch_dtype` in older
+    # transformers and `dtype` in newer ones. Upcasting the stored weights is exact.
+    model = AutoModelForCausalLM.from_pretrained(repo_id, attn_implementation="eager")
+    model = model.float().eval()
 
     acts: dict[str, np.ndarray] = {}
     handles = []
