@@ -79,6 +79,7 @@ git clone https://github.com/xquantize/eqx-zoo && cd eqx-zoo
 uv sync
 uv run pytest -m "not checkpoint"   # fast: tiny random models, no downloads
 uv run pytest                       # full: also downloads and verifies checkpoints
+uv run python benchmarks/generation.py Qwen/Qwen3-0.6B   # load, compile and throughput
 ```
 
 Contributions are welcome. [`AGENTS.md`](AGENTS.md) describes the conventions every model follows.
