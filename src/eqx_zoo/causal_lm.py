@@ -8,6 +8,7 @@ Example:
 """
 
 import json
+import os
 from pathlib import Path
 
 import equinox as eqx
@@ -216,26 +217,37 @@ class CausalLM(eqx.Module):
 
     @classmethod
     def from_pretrained(
-        cls, repo_id: str, *, dtype: DTypeLike = jnp.float32, revision: str | None = None
+        cls,
+        repo_id: str | os.PathLike[str],
+        *,
+        dtype: DTypeLike = jnp.float32,
+        revision: str | None = None,
     ) -> "CausalLM":
-        """Load a pretrained checkpoint from the Hugging Face Hub.
+        """Load a pretrained checkpoint from the Hugging Face Hub or a local directory.
 
         The architecture is read from the checkpoint's `config.json`; see `Config.from_hf`
         for the supported architectures.
 
         Args:
-            repo_id: Hub repository, e.g. `"Qwen/Qwen3-0.6B"`.
+            repo_id: Hub repository, e.g. `"Qwen/Qwen3-0.6B"`, or a local directory
+                containing `config.json` and safetensors files. An existing directory takes
+                precedence over a Hub repository of the same name.
             dtype: Dtype to cast the parameters to.
-            revision: Optional git revision (branch, tag or commit) of the repository.
+            revision: Optional git revision of a Hub repository; ignored for directories.
 
         Returns:
             The model with pretrained weights.
         """
-        path = Path(
-            snapshot_download(
-                repo_id, revision=revision, allow_patterns=["config.json", "*.safetensors"]
+        if Path(repo_id).is_dir():
+            path = Path(repo_id)
+        else:
+            path = Path(
+                snapshot_download(
+                    str(repo_id),
+                    revision=revision,
+                    allow_patterns=["config.json", "*.safetensors"],
+                )
             )
-        )
         config = Config.from_hf(json.loads((path / "config.json").read_text()))
         skeleton = eqx.filter_eval_shape(cls, config, key=jax.random.key(0), dtype=dtype)
         ignore = ["lm_head.weight"] if config.tie_word_embeddings else []
