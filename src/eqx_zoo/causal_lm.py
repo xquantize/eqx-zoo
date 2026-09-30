@@ -15,11 +15,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from huggingface_hub import snapshot_download
-from jaxtyping import Array, DTypeLike, Float, Int, PRNGKeyArray
+from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo._loading import load_safetensors
 from eqx_zoo.config import Config
-from eqx_zoo.layers import Attention, Cache, KVCache, RMSNorm, SwiGLU
+from eqx_zoo.layers import Attention, Cache, KVCache, RMSNorm, SwiGLU, causal_mask
 
 
 class DecoderLayer(eqx.Module):
@@ -68,19 +68,25 @@ class DecoderLayer(eqx.Module):
         self,
         x: Float[Array, "seq dim"],
         positions: Int[Array, " seq"],
+        mask: Bool[Array, "seq keys"],
         cache: KVCache | None = None,
+        cache_index: Int[Array, ""] | None = None,
     ) -> tuple[Float[Array, "seq dim"], KVCache | None]:
         """Apply the layer to a sequence.
 
         Args:
             x: Residual stream for each token.
-            positions: Absolute position of each token.
+            positions: Position of each token, used for the rotary embedding.
+            mask: Attention mask; see `Attention`.
             cache: This layer's key/value cache, or `None`.
+            cache_index: Cache slot for the first token; required with a cache.
 
         Returns:
             The updated residual stream, and the updated cache (or `None`).
         """
-        attn_out, cache = self.self_attn(self.input_layernorm(x), positions, cache)
+        attn_out, cache = self.self_attn(
+            self.input_layernorm(x), positions, mask, cache, cache_index
+        )
         x = x + attn_out
         return x + jax.vmap(self.mlp)(self.post_attention_layernorm(x)), cache
 
@@ -117,14 +123,18 @@ class DecoderModel(eqx.Module):
         self,
         input_ids: Int[Array, " seq"],
         positions: Int[Array, " seq"],
+        mask: Bool[Array, "seq keys"],
         caches: list[KVCache] | None = None,
+        cache_index: Int[Array, ""] | None = None,
     ) -> tuple[Float[Array, "seq dim"], list[KVCache] | None]:
         """Compute final hidden states.
 
         Args:
             input_ids: Token ids.
-            positions: Absolute position of each token.
+            positions: Position of each token, used for the rotary embedding.
+            mask: Attention mask; see `Attention`.
             caches: One key/value cache per layer, or `None`.
+            cache_index: Cache slot for the first token; required with caches.
 
         Returns:
             Normalised hidden states for each token, and the updated caches (or `None`).
@@ -132,12 +142,12 @@ class DecoderModel(eqx.Module):
         x = self.embed_tokens.weight[input_ids]
         if caches is None:
             for layer in self.layers:
-                x, _ = layer(x, positions)
+                x, _ = layer(x, positions, mask)
             return self.norm(x), None
 
         new_caches = []
         for layer, cache in zip(self.layers, caches, strict=True):
-            x, cache = layer(x, positions, cache)
+            x, cache = layer(x, positions, mask, cache, cache_index)
             new_caches.append(cache)
         return self.norm(x), new_caches
 
@@ -187,10 +197,17 @@ class CausalLM(eqx.Module):
             Unnormalised next-token logits for each position, and the updated cache (or
             `None` if no cache was given).
         """
-        start = 0 if cache is None else cache.length
-        positions = start + jnp.arange(input_ids.shape[0])
-        layer_caches = None if cache is None else cache.layers
-        hidden, layer_caches = self.model(input_ids, positions, layer_caches)
+        seq = input_ids.shape[0]
+        if cache is None:
+            slots = jnp.arange(seq)
+            mask = causal_mask(slots, slots)
+            hidden, layer_caches = self.model(input_ids, slots, mask)
+        else:
+            slots = cache.length + jnp.arange(seq)
+            mask = causal_mask(slots, jnp.arange(cache.layers[0].k.shape[0]))
+            hidden, layer_caches = self.model(
+                input_ids, slots, mask, cache.layers, cache_index=cache.length
+            )
 
         if self.lm_head is None:
             logits = hidden @ self.model.embed_tokens.weight.T

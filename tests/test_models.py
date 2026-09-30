@@ -4,6 +4,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from eqx_zoo.layers import causal_mask
+
 TOL = dict(rtol=1e-3, atol=1e-3)
 
 
@@ -11,12 +13,13 @@ def test_layer_by_layer(case):
     model, ref = case.model, case.reference
     ids = jnp.asarray(ref["input_ids"])
     positions = jnp.arange(ids.shape[0])
+    mask = causal_mask(positions, positions)
 
     x = model.model.embed_tokens.weight[ids]
     np.testing.assert_array_equal(x, ref["embed"])
 
     for i, layer in enumerate(model.model.layers):
-        x, _ = layer(x, positions)
+        x, _ = layer(x, positions, mask)
         np.testing.assert_allclose(x, ref[f"layer{i}"], **TOL, err_msg=f"{case.name}: layer {i}")
 
     np.testing.assert_allclose(model.model.norm(x), ref["final_norm"], **TOL)

@@ -11,6 +11,7 @@ from eqx_zoo.layers import (
     RMSNorm,
     SwiGLU,
     apply_rope,
+    causal_mask,
     rope_cos_sin,
     rope_inv_freq,
 )
@@ -105,7 +106,8 @@ def test_qk_norm(qwen3_reference, qwen3_weight):
 def test_self_attention(qwen3_reference, qwen3_weight):
     attn = make_attention(qwen3_weight)
     x = jnp.asarray(qwen3_reference["layer0.input_layernorm"])
-    out, _ = attn(x, jnp.arange(x.shape[0]))
+    positions = jnp.arange(x.shape[0])
+    out, _ = attn(x, positions, causal_mask(positions, positions))
     assert_close(out, qwen3_reference["layer0.self_attn"], 1e-4)
 
 

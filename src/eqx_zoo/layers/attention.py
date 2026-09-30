@@ -3,7 +3,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, DTypeLike, Float, Int, PRNGKeyArray
+from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo.layers._common import linear
 from eqx_zoo.layers.norm import RMSNorm
@@ -74,6 +74,21 @@ class Cache(eqx.Module):
     length: Int[Array, ""]
 
 
+def causal_mask(
+    query_slots: Int[Array, " seq"], key_slots: Int[Array, " keys"]
+) -> Bool[Array, "seq keys"]:
+    """Mask allowing each query to attend to keys in the same or earlier slots.
+
+    Args:
+        query_slots: Slot of each query token.
+        key_slots: Slot of each key.
+
+    Returns:
+        `True` where a query may attend to a key.
+    """
+    return key_slots[None, :] <= query_slots[:, None]
+
+
 class Attention(eqx.Module):
     """Causal grouped-query attention with RoPE, optional per-head q/k norm and q/k/v bias.
 
@@ -121,7 +136,7 @@ class Attention(eqx.Module):
         key: PRNGKeyArray,
         dtype: DTypeLike = jnp.float32,
     ):
-        """Create a randomly initialised attention block.
+        """Grouped-query attention with RoPE, optional per-head q/k norm and q/k/v bias.
 
         Args:
             dim: Model (input and output) dimension.
@@ -159,15 +174,19 @@ class Attention(eqx.Module):
         self,
         x: Float[Array, "seq dim"],
         positions: Int[Array, " seq"],
+        mask: Bool[Array, "seq keys"],
         cache: KVCache | None = None,
+        cache_index: Int[Array, ""] | None = None,
     ) -> tuple[Float[Array, "seq dim"], KVCache | None]:
-        """Attend causally over a sequence, optionally continuing from a cache.
+        """Attend over a sequence, optionally continuing from a cache.
 
         Args:
             x: Hidden states for each new token.
-            positions: Absolute position of each new token. Must be consecutive; with a
-                cache, the new keys and values are written starting at slot `positions[0]`.
+            positions: Position of each new token, used for the rotary embedding.
+            mask: `True` where a new token may attend to a key. Keys are the tokens in `x`
+                without a cache, or every cache slot with one.
             cache: Keys and values of earlier tokens, or `None` to attend only within `x`.
+            cache_index: Cache slot for the first new token; required with a cache.
 
         Returns:
             The attention output for each new token (before the residual connection), and
@@ -183,20 +202,18 @@ class Attention(eqx.Module):
         cos, sin = rope_cos_sin(positions, self.head_dim, self.rope_theta, self.rope_scaling)
         q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
 
-        if cache is None:
-            key_positions = positions
-        else:
-            cache = cache.update(k, v, positions[0])
+        if cache is not None:
+            if cache_index is None:
+                raise ValueError("cache_index is required when a cache is given")
+            cache = cache.update(k, v, cache_index)
             k, v = cache.k, cache.v
-            key_positions = jnp.arange(k.shape[0])
 
         groups = self.num_heads // self.num_kv_heads
         k = jnp.repeat(k, groups, axis=1)
         v = jnp.repeat(v, groups, axis=1)
 
         scores = jnp.einsum("qhd,khd->hqk", q, k) * self.head_dim**-0.5
-        causal = key_positions[None, :] <= positions[:, None]
-        scores = jnp.where(causal, scores, jnp.finfo(scores.dtype).min)
+        scores = jnp.where(mask[None], scores, jnp.finfo(scores.dtype).min)
         probs = jax.nn.softmax(scores.astype(jnp.float32), axis=-1).astype(v.dtype)
 
         out = jnp.einsum("hqk,khd->qhd", probs, v).reshape(seq, self.num_heads * self.head_dim)
