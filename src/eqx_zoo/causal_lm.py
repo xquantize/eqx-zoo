@@ -1,4 +1,4 @@
-"""Decoder-only causal language models (Qwen2, Qwen3).
+"""Decoder-only causal language models (Llama, Qwen2, Qwen3).
 
 Example:
     >>> import jax.numpy as jnp
@@ -53,6 +53,7 @@ class DecoderLayer(eqx.Module):
             num_kv_heads=config.num_key_value_heads,
             head_dim=config.head_dim,
             rope_theta=config.rope_theta,
+            rope_scaling=config.rope_scaling,
             eps=eps,
             qkv_bias=config.attention_bias,
             qk_norm=config.qk_norm,
