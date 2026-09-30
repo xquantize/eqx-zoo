@@ -49,7 +49,12 @@ Any checkpoint with a supported architecture loads with `CausalLM.from_pretraine
 | `Qwen3ForCausalLM` | [Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) |
 | `Qwen2ForCausalLM` | [Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) |
 
-Each verified checkpoint is tested against Hugging Face activations captured in float32: every layer's output must match, and greedy generation must reproduce the reference output token for token. Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](tests).
+Each verified checkpoint is tested against Hugging Face activations in two tiers:
+
+- **float32:** every layer's output must match, and greedy generation must reproduce the reference output token for token.
+- **bfloat16:** logits must be about as accurate as Hugging Face's own bfloat16, measured against its float32 output. Exact greedy agreement isn't required in bf16, since it drifts even between Hugging Face's own bf16 and float32 runs.
+
+Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](tests).
 
 ## Development
 
