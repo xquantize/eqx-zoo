@@ -9,11 +9,13 @@ import pytest
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from support.reference import capture
-from support.registry import CHECKPOINTS
+from support.registry import CHECKPOINTS, TINY_MODELS
+from support.tiny import build
 
 from eqx_zoo import CausalLM
 
 REFERENCE_DIR = Path(__file__).parents[1] / "reference"
+_CHECKPOINT_FIXTURES = {"qwen3_reference", "qwen3_weight"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -29,6 +31,12 @@ def pytest_addoption(parser):
         action="store_true",
         help="Recompute the Hugging Face reference activations instead of using the cache.",
     )
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if _CHECKPOINT_FIXTURES & set(item.fixturenames):
+            item.add_marker(pytest.mark.checkpoint)
 
 
 @pytest.fixture(scope="session")
@@ -50,13 +58,24 @@ def get_reference(request):
     return get
 
 
-@pytest.fixture(scope="session", params=list(CHECKPOINTS))
-def case(request, get_reference) -> Case:
-    """Each registered checkpoint in float32, with its reference activations."""
+@pytest.fixture(
+    scope="session",
+    params=[
+        *TINY_MODELS,
+        *(pytest.param(name, marks=pytest.mark.checkpoint) for name in CHECKPOINTS),
+    ],
+)
+def case(request, get_reference, tmp_path_factory) -> Case:
+    """Every tiny model and registered checkpoint in float32, with its reference activations."""
     name = request.param
-    reference = get_reference(name)  # capture first, so the HF model is freed before ours loads
-    model = CausalLM.from_pretrained(CHECKPOINTS[name], dtype=jnp.float32)
-    return Case(name, model, reference)
+    if name in TINY_MODELS:
+        directory = tmp_path_factory.mktemp(name)
+        reference = build(name, directory)
+        source = str(directory)
+    else:
+        reference = get_reference(name)
+        source = CHECKPOINTS[name]
+    return Case(name, CausalLM.from_pretrained(source, dtype=jnp.float32), reference)
 
 
 @pytest.fixture(scope="session")

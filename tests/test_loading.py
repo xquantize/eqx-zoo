@@ -3,10 +3,13 @@
 import equinox as eqx
 import jax
 import numpy as np
+import pytest
 from huggingface_hub import snapshot_download
 from support.registry import CHECKPOINTS
 
 from eqx_zoo import CausalLM
+
+pytestmark = pytest.mark.checkpoint
 
 
 def test_loads_from_local_directory():

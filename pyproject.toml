@@ -63,6 +63,7 @@ explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["checkpoint: needs a pretrained checkpoint download (deselect with -m 'not checkpoint')"]
 
 [tool.ruff]
 line-length = 100
