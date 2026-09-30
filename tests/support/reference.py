@@ -7,18 +7,22 @@ NEW_TOKENS = 20
 
 
 def capture(repo_id: str) -> dict[str, np.ndarray]:
-    """Run the Hugging Face model in float32 and record activations and a greedy continuation.
-
-    The batch axis is removed from every array.
-    """
-    import torch
+    """Load a Hub checkpoint in float32 and record its reference activations."""
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(repo_id)
     # Cast after loading rather than passing a dtype: the keyword is `torch_dtype` in older
     # transformers and `dtype` in newer ones. Upcasting the stored weights is exact.
     model = AutoModelForCausalLM.from_pretrained(repo_id, attn_implementation="eager")
-    model = model.float().eval()
+    return capture_model(model.float().eval(), tok(PROMPT, return_tensors="pt").input_ids)
+
+
+def capture_model(model, input_ids) -> dict[str, np.ndarray]:
+    """Record activations and a greedy continuation for `input_ids` of shape (1, seq).
+
+    The batch axis is removed from every array.
+    """
+    import torch
 
     acts: dict[str, np.ndarray] = {}
     handles = []
@@ -42,19 +46,23 @@ def capture(repo_id: str) -> dict[str, np.ndarray]:
         if hasattr(l0.self_attn, name):
             record(getattr(l0.self_attn, name), f"layer0.self_attn.{name}")
 
-    enc = tok(PROMPT, return_tensors="pt")
     with torch.no_grad():
-        logits = model(enc.input_ids).logits
+        logits = model(input_ids).logits
 
     # Remove hooks so generation doesn't overwrite the captured activations.
     for handle in handles:
         handle.remove()
     with torch.no_grad():
-        out = model.generate(**enc, max_new_tokens=NEW_TOKENS, do_sample=False)
+        out = model.generate(
+            input_ids,
+            attention_mask=torch.ones_like(input_ids),
+            max_new_tokens=NEW_TOKENS,
+            do_sample=False,
+        )
 
     return {
-        "input_ids": enc.input_ids[0].numpy(),
+        "input_ids": input_ids[0].numpy(),
         "logits": logits[0].float().numpy(),
-        "generated": out[0, enc.input_ids.shape[1] :].numpy(),
+        "generated": out[0, input_ids.shape[1] :].numpy(),
         **acts,
     }

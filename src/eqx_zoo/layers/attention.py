@@ -1,201 +1,13 @@
-"""Building blocks shared across model families.
-
-All modules operate on a single, unbatched sequence; use `jax.vmap` to batch them.
-Attribute names mirror the corresponding Hugging Face checkpoint parameters so that
-pretrained weights can be loaded by name.
-"""
-
-import dataclasses
+"""Grouped-query attention and its key/value cache."""
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, DTypeLike, Float, Int, PRNGKeyArray
 
-
-def _linear(
-    in_dim: int, out_dim: int, *, key: PRNGKeyArray, dtype: DTypeLike, bias: bool = False
-) -> eqx.nn.Linear:
-    return eqx.nn.Linear(in_dim, out_dim, use_bias=bias, key=key, dtype=dtype)
-
-
-class RMSNorm(eqx.Module):
-    """Root-mean-square layer normalisation over the last axis.
-
-    The normalisation is computed in float32 and cast back to the input dtype before
-    scaling, matching the Hugging Face reference implementation.
-
-    Attributes:
-        weight: Learnable per-feature scale.
-        eps: Constant added to the mean square for numerical stability.
-    """
-
-    weight: Float[Array, " dim"]
-    eps: float = eqx.field(static=True)
-
-    def __init__(self, dim: int, eps: float = 1e-6, dtype: DTypeLike = jnp.float32):
-        """Create a norm with its scale initialised to ones.
-
-        Args:
-            dim: Size of the normalised (last) axis.
-            eps: Constant added to the mean square for numerical stability.
-            dtype: Parameter dtype.
-        """
-        self.weight = jnp.ones(dim, dtype=dtype)
-        self.eps = eps
-
-    def __call__(self, x: Float[Array, "*batch dim"]) -> Float[Array, "*batch dim"]:
-        """Normalise `x` over its last axis.
-
-        Args:
-            x: Input with any number of leading axes.
-
-        Returns:
-            The normalised and scaled input, in the input dtype.
-        """
-        dtype = x.dtype
-        x = x.astype(jnp.float32)
-        x = x * jax.lax.rsqrt(jnp.mean(x**2, axis=-1, keepdims=True) + self.eps)
-        return self.weight * x.astype(dtype)
-
-
-class SwiGLU(eqx.Module):
-    """Gated feed-forward block computing `down(silu(gate(x)) * up(x))`.
-
-    Attributes:
-        gate_proj: Projection to the hidden dimension, passed through SiLU.
-        up_proj: Projection to the hidden dimension, multiplied with the gate.
-        down_proj: Projection back to the model dimension.
-    """
-
-    gate_proj: eqx.nn.Linear
-    up_proj: eqx.nn.Linear
-    down_proj: eqx.nn.Linear
-
-    def __init__(
-        self, dim: int, hidden_dim: int, *, key: PRNGKeyArray, dtype: DTypeLike = jnp.float32
-    ):
-        """Create a randomly initialised block.
-
-        Args:
-            dim: Model (input and output) dimension.
-            hidden_dim: Inner dimension of the gated projection.
-            key: PRNG key for parameter initialisation.
-            dtype: Parameter dtype.
-        """
-        gate_key, up_key, down_key = jax.random.split(key, 3)
-        self.gate_proj = _linear(dim, hidden_dim, key=gate_key, dtype=dtype)
-        self.up_proj = _linear(dim, hidden_dim, key=up_key, dtype=dtype)
-        self.down_proj = _linear(hidden_dim, dim, key=down_key, dtype=dtype)
-
-    def __call__(self, x: Float[Array, " dim"]) -> Float[Array, " dim"]:
-        """Apply the block to a single token.
-
-        Args:
-            x: One token's hidden state.
-
-        Returns:
-            The transformed hidden state.
-        """
-        return self.down_proj(jax.nn.silu(self.gate_proj(x)) * self.up_proj(x))
-
-
-@dataclasses.dataclass(frozen=True)
-class Llama3RopeScaling:
-    """Llama 3 RoPE frequency scaling for extended context lengths.
-
-    Low frequencies are divided by `factor`, high frequencies are unchanged, and the band
-    in between is smoothly interpolated.
-
-    Attributes:
-        factor: Divisor applied to the lowest frequencies.
-        low_freq_factor: Sets the wavelength above which frequencies are fully scaled.
-        high_freq_factor: Sets the wavelength below which frequencies are unchanged.
-        original_max_position_embeddings: Context length the model was pretrained with.
-    """
-
-    factor: float
-    low_freq_factor: float
-    high_freq_factor: float
-    original_max_position_embeddings: int
-
-
-def rope_inv_freq(
-    head_dim: int, theta: float, scaling: Llama3RopeScaling | None = None
-) -> Float[Array, " half_head_dim"]:
-    """Compute RoPE inverse frequencies in float32, optionally with Llama 3 scaling.
-
-    Args:
-        head_dim: Per-head dimension; must be even.
-        theta: RoPE base frequency.
-        scaling: Optional Llama 3 frequency scaling.
-
-    Returns:
-        One inverse frequency per pair of rotated dimensions.
-    """
-    inv_freq = 1.0 / theta ** (jnp.arange(0, head_dim, 2, dtype=jnp.float32) / head_dim)
-    if scaling is None:
-        return inv_freq
-
-    context = scaling.original_max_position_embeddings
-    low_freq_wavelen = context / scaling.low_freq_factor
-    high_freq_wavelen = context / scaling.high_freq_factor
-    wavelen = 2 * jnp.pi / inv_freq
-
-    scaled = jnp.where(wavelen > low_freq_wavelen, inv_freq / scaling.factor, inv_freq)
-    smooth = (context / wavelen - scaling.low_freq_factor) / (
-        scaling.high_freq_factor - scaling.low_freq_factor
-    )
-    smoothed = (1 - smooth) * scaled / scaling.factor + smooth * scaled
-    medium = (wavelen >= high_freq_wavelen) & (wavelen <= low_freq_wavelen)
-    return jnp.where(medium, smoothed, scaled)
-
-
-def rope_cos_sin(
-    positions: Int[Array, " seq"],
-    head_dim: int,
-    theta: float,
-    scaling: Llama3RopeScaling | None = None,
-) -> tuple[Float[Array, "seq head_dim"], Float[Array, "seq head_dim"]]:
-    """Compute rotary embedding tables in the rotate-half layout, in float32.
-
-    Args:
-        positions: Absolute position of each token.
-        head_dim: Per-head dimension; must be even.
-        theta: RoPE base frequency.
-        scaling: Optional Llama 3 frequency scaling.
-
-    Returns:
-        The cosine and sine tables, one row per position.
-    """
-    freqs = positions.astype(jnp.float32)[:, None] * rope_inv_freq(head_dim, theta, scaling)
-    angles = jnp.concatenate([freqs, freqs], axis=-1)
-    return jnp.cos(angles), jnp.sin(angles)
-
-
-def apply_rope(
-    x: Float[Array, "seq heads head_dim"],
-    cos: Float[Array, "seq head_dim"],
-    sin: Float[Array, "seq head_dim"],
-) -> Float[Array, "seq heads head_dim"]:
-    """Rotate each head of `x` by its token's position.
-
-    Uses the rotate-half layout, pairing dimension `i` with `i + head_dim // 2`, as in
-    Hugging Face transformers (not the interleaved layout of the original RoPE paper).
-
-    Args:
-        x: Per-head queries or keys.
-        cos: Cosine table from `rope_cos_sin`.
-        sin: Sine table from `rope_cos_sin`.
-
-    Returns:
-        The rotated input, in the input dtype.
-    """
-    cos = cos.astype(x.dtype)[:, None, :]
-    sin = sin.astype(x.dtype)[:, None, :]
-    x1, x2 = jnp.split(x, 2, axis=-1)
-    rotated = jnp.concatenate([-x2, x1], axis=-1)
-    return x * cos + rotated * sin
+from eqx_zoo.layers._common import linear
+from eqx_zoo.layers.norm import RMSNorm
+from eqx_zoo.layers.rope import Llama3RopeScaling, apply_rope, rope_cos_sin
 
 
 class KVCache(eqx.Module):
@@ -279,7 +91,7 @@ class Attention(eqx.Module):
         num_kv_heads: Number of key/value heads.
         head_dim: Per-head dimension.
         rope_theta: RoPE base frequency.
-        rope_scaling: RoPE frequency scaling, or None.
+        rope_scaling: RoPE frequency scaling, or `None`.
     """
 
     q_proj: eqx.nn.Linear
@@ -331,10 +143,10 @@ class Attention(eqx.Module):
             raise ValueError("num_heads must be divisible by num_kv_heads")
         q_key, k_key, v_key, o_key = jax.random.split(key, 4)
         q_dim, kv_dim = num_heads * head_dim, num_kv_heads * head_dim
-        self.q_proj = _linear(dim, q_dim, key=q_key, dtype=dtype, bias=qkv_bias)
-        self.k_proj = _linear(dim, kv_dim, key=k_key, dtype=dtype, bias=qkv_bias)
-        self.v_proj = _linear(dim, kv_dim, key=v_key, dtype=dtype, bias=qkv_bias)
-        self.o_proj = _linear(q_dim, dim, key=o_key, dtype=dtype)
+        self.q_proj = linear(dim, q_dim, key=q_key, dtype=dtype, bias=qkv_bias)
+        self.k_proj = linear(dim, kv_dim, key=k_key, dtype=dtype, bias=qkv_bias)
+        self.v_proj = linear(dim, kv_dim, key=v_key, dtype=dtype, bias=qkv_bias)
+        self.o_proj = linear(q_dim, dim, key=o_key, dtype=dtype)
         self.q_norm = RMSNorm(head_dim, eps=eps, dtype=dtype) if qk_norm else None
         self.k_norm = RMSNorm(head_dim, eps=eps, dtype=dtype) if qk_norm else None
         self.num_heads = num_heads

@@ -32,16 +32,17 @@ jobs:
             pytest-args: ""
           - resolution: lowest-direct
             uv-args: --resolution lowest-direct
-            pytest-args: -k "test_config or smollm2"
+            pytest-args: -m "not checkpoint"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - name: Cache checkpoints and reference activations
+        if: matrix.resolution == 'highest'
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/huggingface
             reference
-          key: models-${{ matrix.resolution }}-${{ hashFiles('tests/conftest.py', 'tests/_reference.py') }}
+          key: models-${{ hashFiles('tests/support/registry.py', 'tests/support/reference.py') }}
       - name: Run tests
         run: uv run ${{ matrix.uv-args }} pytest -v ${{ matrix.pytest-args }}
