@@ -6,6 +6,7 @@ CHECKPOINTS = {
     "qwen2.5-0.5b": "Qwen/Qwen2.5-0.5B",
     "smollm2-135m": "HuggingFaceTB/SmolLM2-135M",
     "llama-3.2-1b": "unsloth/Llama-3.2-1B",
+    "minimind-3-moe": "jingyaogong/minimind-3-moe",
 }
 
 # Tiny randomly initialised models: test id -> (transformers config class, config overrides).
