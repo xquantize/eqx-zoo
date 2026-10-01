@@ -10,6 +10,7 @@ _ARCHITECTURES: dict[str, dict[str, bool]] = {
     "LlamaForCausalLM": {"attention_bias": False, "qk_norm": False},
     "Qwen2ForCausalLM": {"attention_bias": True, "qk_norm": False},
     "Qwen3ForCausalLM": {"attention_bias": False, "qk_norm": True},
+    "Qwen3MoeForCausalLM": {"attention_bias": False, "qk_norm": True},
 }
 
 
@@ -35,6 +36,13 @@ class Config:
         attention_bias: Whether the query, key and value projections have a bias.
         qk_norm: Whether each query and key head is RMS-normalised.
         rope_scaling: RoPE frequency scaling, or None for standard RoPE.
+        num_experts: Number of experts in each mixture-of-experts layer; 0 for dense models.
+        num_experts_per_tok: Number of experts each token is routed to.
+        moe_intermediate_size: Inner dimension of each expert's MLP.
+        norm_topk_prob: Whether the selected experts' routing weights are renormalised to
+            sum to one.
+        moe_layers: Indices of the decoder layers that are mixture-of-experts; the others
+            use a dense MLP.
     """
 
     architecture: str
@@ -51,6 +59,11 @@ class Config:
     attention_bias: bool
     qk_norm: bool
     rope_scaling: Llama3RopeScaling | None
+    num_experts: int = 0
+    num_experts_per_tok: int = 0
+    moe_intermediate_size: int = 0
+    norm_topk_prob: bool = False
+    moe_layers: tuple[int, ...] = ()
 
     @classmethod
     def from_hf(cls, config: dict[str, Any]) -> "Config":
@@ -94,12 +107,24 @@ class Config:
             raise NotImplementedError(f"activation {config['hidden_act']!r} is not supported")
 
         num_heads = config["num_attention_heads"]
+        num_layers = config["num_hidden_layers"]
+        num_experts = config.get("num_experts", 0)
+        if num_experts:
+            # A layer is mixture-of-experts unless listed in `mlp_only_layers`, and only
+            # every `decoder_sparse_step`-th layer is; as in the Hugging Face implementation.
+            step = config.get("decoder_sparse_step", 1)
+            dense = set(config.get("mlp_only_layers", []))
+            moe_layers = tuple(
+                i for i in range(num_layers) if i not in dense and (i + 1) % step == 0
+            )
+        else:
+            moe_layers = ()
         return cls(
             architecture=architecture,
             vocab_size=config["vocab_size"],
             hidden_size=config["hidden_size"],
             intermediate_size=config["intermediate_size"],
-            num_hidden_layers=config["num_hidden_layers"],
+            num_hidden_layers=num_layers,
             num_attention_heads=num_heads,
             num_key_value_heads=config.get("num_key_value_heads", num_heads),
             head_dim=config.get("head_dim") or config["hidden_size"] // num_heads,
@@ -109,4 +134,9 @@ class Config:
             attention_bias=config.get("attention_bias", features["attention_bias"]),
             qk_norm=features["qk_norm"],
             rope_scaling=rope_scaling,
+            num_experts=num_experts,
+            num_experts_per_tok=config.get("num_experts_per_tok", 0),
+            moe_intermediate_size=config.get("moe_intermediate_size", 0),
+            norm_topk_prob=config.get("norm_topk_prob", False),
+            moe_layers=moe_layers,
         )
