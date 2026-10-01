@@ -125,6 +125,6 @@ def generate_batch(
 
     if _contains_moe(model):
         # `jax.lax.ragged_dot`, used by mixture-of-experts layers, cannot yet be vmapped,
-        # so these prompts are generated one after another instead of together.
+        # so these prompts are generated one after another instead of together (#23).
         return jax.lax.map(lambda args: generate_one(*args), (prompt_ids, prompt_mask, keys))
     return jax.vmap(generate_one)(prompt_ids, prompt_mask, keys)
