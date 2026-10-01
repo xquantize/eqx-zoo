@@ -82,7 +82,7 @@ uv run pytest                       # full: also downloads and verifies checkpoi
 uv run python benchmarks/generation.py Qwen/Qwen3-0.6B   # load, compile and throughput
 ```
 
-Contributions are welcome. [`AGENTS.md`](https://github.com/xquantize/eqx-zoo/blob/main/AGENTS.md) describes the conventions every model follows.
+Contributions are welcome. See [`CONTRIBUTING.md`](https://github.com/xquantize/eqx-zoo/blob/main/CONTRIBUTING.md) for setup, conventions and how to add a model.
 
 ## See also
 
