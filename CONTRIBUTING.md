@@ -43,10 +43,23 @@ Reference activations are captured from Hugging Face on first use and cached in
 - Pull requests that claim a performance change should include before/after numbers from
   `uv run python benchmarks/generation.py <repo_id> [--dtype bfloat16]`.
 
+## Versioning
+
+eqx-zoo follows semantic versioning, adapted for releases before 1.0.
+
+- **Public API:** the names importable from `eqx_zoo` and `eqx_zoo.layers`. Everything else,
+  including `eqx_zoo.models` and modules whose names start with `_`, is internal and may change
+  in any release.
+- **Patch releases (`0.x.Z`)** contain backwards-compatible changes: new architectures, new
+  features, fixes and documentation. Most releases are patch releases.
+- **Minor releases (`0.X.0`)** are reserved for changes that break the public API, such as a
+  removed name or an incompatible signature. Their release notes list every break and how to
+  migrate.
+
 ## Releasing (maintainers)
 
 1. From an up-to-date `main`: `git switch -c release/vX.Y.Z`, then `uv version --bump patch`
-   (or `minor`), and update `version` and
+   (or `minor` for a breaking change; see Versioning), and update `version` and
    `date-released` in `CITATION.cff`.
 2. Commit, push, open a pull request, wait for CI, and squash-merge.
 3. `gh release create vX.Y.Z --target main --title vX.Y.Z --notes-file <notes>`. The Release
