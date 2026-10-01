@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use eqx-zoo in your research, please cite it as below."
+title: "eqx-zoo: verified Equinox ports of pretrained models"
+type: software
+authors:
+  - given-names: Zane
+    family-names: Neave
+repository-code: "https://github.com/xquantize/eqx-zoo"
+url: "https://pypi.org/project/eqx-zoo/"
+license: Apache-2.0
+version: 0.2.1
+date-released: "2026-10-01"
+keywords:
+  - jax
+  - equinox
+  - large language models
+  - pretrained models
