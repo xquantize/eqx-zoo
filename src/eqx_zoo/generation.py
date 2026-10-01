@@ -5,12 +5,20 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Bool, Int, PRNGKeyArray
 
+from eqx_zoo.layers import SparseMoE
+
 
 def _check_args(max_new_tokens: int, temperature: float, key: PRNGKeyArray | None) -> None:
     if max_new_tokens < 1:
         raise ValueError("max_new_tokens must be positive")
     if temperature > 0 and key is None:
         raise ValueError("a PRNG key is required when temperature > 0")
+
+
+def _contains_moe(model) -> bool:
+    """Whether `model` contains a mixture-of-experts layer anywhere in its module tree."""
+    is_moe = lambda node: isinstance(node, SparseMoE)  # noqa: E731
+    return any(is_moe(node) for node in jax.tree.leaves(model, is_leaf=is_moe))
 
 
 def _generate(model, prompt_ids, prompt_mask, max_new_tokens, temperature, key):
@@ -86,6 +94,9 @@ def generate_batch(
     decoding each row is identical to calling `generate` on that prompt alone. Prompts
     must be left-padded, so that each prompt's last token is a real token.
 
+    Models with mixture-of-experts layers generate their prompts one after another rather
+    than in parallel; results are identical, but batching gives no speed-up for them yet.
+
     Args:
         model: A zoo language model providing `__call__(ids, cache, attention_mask)` and
             `init_cache`.
@@ -108,6 +119,12 @@ def generate_batch(
         raise ValueError("prompt_ids and prompt_mask must both have shape (batch, prompt)")
     _check_args(max_new_tokens, temperature, key)
     keys = jax.random.split(jax.random.key(0) if key is None else key, prompt_ids.shape[0])
-    return jax.vmap(
-        lambda ids, mask, k: _generate(model, ids, mask, max_new_tokens, temperature, k)
-    )(prompt_ids, prompt_mask, keys)
+
+    def generate_one(ids, mask, k):
+        return _generate(model, ids, mask, max_new_tokens, temperature, k)
+
+    if _contains_moe(model):
+        # `jax.lax.ragged_dot`, used by mixture-of-experts layers, cannot yet be vmapped,
+        # so these prompts are generated one after another instead of together (#23).
+        return jax.lax.map(lambda args: generate_one(*args), (prompt_ids, prompt_mask, keys))
+    return jax.vmap(generate_one)(prompt_ids, prompt_mask, keys)

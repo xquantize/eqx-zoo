@@ -64,6 +64,9 @@ Any checkpoint with a supported architecture loads with `CausalLM.from_pretraine
 | `LlamaForCausalLM` | [SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M), [Llama 3.2 1B](https://huggingface.co/meta-llama/Llama-3.2-1B) |
 | `Qwen3ForCausalLM` | [Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) |
 | `Qwen2ForCausalLM` | [Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) |
+| `Qwen3MoeForCausalLM` | [MiniMind-3 MoE](https://huggingface.co/jingyaogong/minimind-3-moe) |
+
+Mixture-of-experts models, including [Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B), use the same `Qwen3MoeForCausalLM` architecture; experts are computed with grouped matrix multiplications. `generate_batch` currently processes their prompts one after another ([#23](https://github.com/xquantize/eqx-zoo/issues/23)).
 
 Each verified checkpoint is tested against Hugging Face activations in two tiers:
 

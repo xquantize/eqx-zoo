@@ -67,3 +67,40 @@ def test_llama3_rope_scaling():
 def test_rejects_mlp_bias():
     with pytest.raises(NotImplementedError, match="MLP bias"):
         Config.from_hf(QWEN3 | {"mlp_bias": True})
+
+
+QWEN3_MOE = QWEN3 | {
+    "architectures": ["Qwen3MoeForCausalLM"],
+    "num_experts": 128,
+    "num_experts_per_tok": 8,
+    "moe_intermediate_size": 768,
+    "norm_topk_prob": True,
+    "decoder_sparse_step": 1,
+    "mlp_only_layers": [],
+}
+
+
+def test_qwen3_moe():
+    config = Config.from_hf(QWEN3_MOE)
+    assert (config.num_experts, config.num_experts_per_tok) == (128, 8)
+    assert config.moe_intermediate_size == 768 and config.norm_topk_prob
+    assert config.qk_norm and not config.attention_bias
+    assert config.moe_layers == tuple(range(28))  # every layer is MoE
+
+
+def test_moe_layer_selection():
+    config = Config.from_hf(QWEN3_MOE | {"decoder_sparse_step": 2, "mlp_only_layers": [1]})
+    # With a step of 2, layers 1, 3, 5, ... are MoE; layer 1 is then forced to be dense.
+    assert config.moe_layers == tuple(i for i in range(28) if (i + 1) % 2 == 0 and i != 1)
+
+
+def test_dense_configs_have_no_experts():
+    config = Config.from_hf(QWEN3)
+    assert config.num_experts == 0 and config.moe_layers == ()
+
+
+@pytest.mark.parametrize("key", ["num_experts", "num_local_experts"])
+def test_expert_count_under_either_name(key):
+    moe = {k: v for k, v in QWEN3_MOE.items() if k != "num_experts"}
+    config = Config.from_hf(moe | {key: 128})
+    assert config.num_experts == 128 and config.moe_layers == tuple(range(28))
