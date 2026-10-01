@@ -18,8 +18,8 @@ from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo._loading import load_safetensors
-from eqx_zoo.config import Config
 from eqx_zoo.layers import Attention, Cache, KVCache, RMSNorm, SparseMoE, SwiGLU, causal_mask
+from eqx_zoo.models.causal_lm.config import Config
 
 
 class DecoderLayer(eqx.Module):

@@ -1,6 +1,5 @@
-"""Pytest fixtures and options, wiring the registry and reference capture into the tests."""
+"""Shared pytest options and fixtures: the reference cache and checkpoint weights."""
 
-import dataclasses
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -9,21 +8,11 @@ import pytest
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from support.reference import capture
-from support.registry import CHECKPOINTS, TINY_MODELS
-from support.tiny import build
-
-from eqx_zoo import CausalLM
+from support.registry import CHECKPOINTS
 
 REFERENCE_DIR = Path(__file__).parents[1] / "reference"
+# Fixtures that read a downloaded checkpoint; tests using them are marked `checkpoint`.
 _CHECKPOINT_FIXTURES = {"qwen3_reference", "qwen3_weight"}
-
-
-@dataclasses.dataclass(frozen=True)
-class Case:
-    name: str
-    source: str
-    model: CausalLM
-    reference: dict[str, np.ndarray]
 
 
 def pytest_addoption(parser):
@@ -57,32 +46,6 @@ def get_reference(request):
         return loaded[name]
 
     return get
-
-
-@pytest.fixture(
-    scope="session",
-    params=[
-        *TINY_MODELS,
-        *(pytest.param(name, marks=pytest.mark.checkpoint) for name in CHECKPOINTS),
-    ],
-)
-def case(request, get_reference, tmp_path_factory) -> Case:
-    """Every tiny model and registered checkpoint in float32, with its reference activations."""
-    name = request.param
-    if name in TINY_MODELS:
-        directory = tmp_path_factory.mktemp(name)
-        reference = build(name, directory)
-        source = str(directory)
-    else:
-        reference = get_reference(name)
-        source = CHECKPOINTS[name]
-    return Case(name, source, CausalLM.from_pretrained(source, dtype=jnp.float32), reference)
-
-
-@pytest.fixture(scope="session")
-def bf16_model(case) -> CausalLM:
-    """The same model as `case`, loaded in bfloat16 as a user would."""
-    return CausalLM.from_pretrained(case.source, dtype=jnp.bfloat16)
 
 
 @pytest.fixture(scope="session")

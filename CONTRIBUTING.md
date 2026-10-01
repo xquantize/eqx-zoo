@@ -22,8 +22,11 @@ Reference activations are captured from Hugging Face on first use and cached in
 - Modules act on a single unbatched sequence; batch with `jax.vmap`.
 - Attribute names mirror Hugging Face checkpoint parameter names, so weights load by name.
 - Match the reference numerics, including where it computes in float32 (norms, softmax, RoPE).
-- Building blocks live in `src/eqx_zoo/layers/`, one module per kind of block; the decoder
-  model is `src/eqx_zoo/causal_lm.py`; per-architecture settings are in `src/eqx_zoo/config.py`.
+- Building blocks live in `src/eqx_zoo/layers/`, one module per kind of block. Each model
+  class has a sub-package in `src/eqx_zoo/models/` (e.g. `models/causal_lm/`) holding its model
+  and its configuration, including the table of supported architectures.
+- Tests for each model class live in `tests/<model class>/`; shared building blocks are
+  tested directly in `tests/`.
 - Google-style docstrings on all public modules, classes and functions, with jaxtyping shape
   annotations.
 - The README uses absolute URLs for images and links, because PyPI renders it without the
@@ -33,7 +36,8 @@ Reference activations are captured from Hugging Face on first use and cached in
 
 - **A checkpoint of a supported architecture:** add it to `CHECKPOINTS` in
   `tests/support/registry.py` and run the full test suite.
-- **A new architecture:** add its settings to `config.py`, a tiny config to `TINY_MODELS` in
+- **A new architecture:** add it to the architecture table in its model class's `config.py`
+  (e.g. `src/eqx_zoo/models/causal_lm/config.py`), a tiny config to `TINY_MODELS` in
   `tests/support/registry.py` (commented with the code paths it covers), and at least one
   verified checkpoint to `CHECKPOINTS`.
 
