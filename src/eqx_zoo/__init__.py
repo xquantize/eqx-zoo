@@ -2,10 +2,9 @@
 
 from importlib.metadata import version
 
-from eqx_zoo.causal_lm import CausalLM
-from eqx_zoo.config import Config
 from eqx_zoo.generation import generate, generate_batch
 from eqx_zoo.layers import Cache
+from eqx_zoo.models.causal_lm import CausalLM, Config
 
 __all__ = ["Cache", "CausalLM", "Config", "generate", "generate_batch"]
 __version__ = version("eqx-zoo")
