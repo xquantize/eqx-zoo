@@ -31,4 +31,17 @@ TINY_MODELS = {
     "tiny-qwen2": ("Qwen2Config", {"tie_word_embeddings": False}),
     # Per-head q/k norm, with head_dim (32) != hidden_size / num_attention_heads (16).
     "tiny-qwen3": ("Qwen3Config", {"tie_word_embeddings": True, "head_dim": 32}),
+    # Routed experts (2 of 8, renormalised), a dense layer mixed in via `mlp_only_layers`,
+    # and an untied output head.
+    "tiny-qwen3-moe": (
+        "Qwen3MoeConfig",
+        {
+            "tie_word_embeddings": False,
+            "num_experts": 8,
+            "num_experts_per_tok": 2,
+            "moe_intermediate_size": 32,
+            "norm_topk_prob": True,
+            "mlp_only_layers": [1],
+        },
+    ),
 }

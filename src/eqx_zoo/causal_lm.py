@@ -1,4 +1,4 @@
-"""Decoder-only causal language models (Llama, Qwen2, Qwen3).
+"""Decoder-only causal language models (Llama, Qwen2, Qwen3, Qwen3-MoE).
 
 Example:
     >>> import jax.numpy as jnp
@@ -19,7 +19,7 @@ from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo._loading import load_safetensors
 from eqx_zoo.config import Config
-from eqx_zoo.layers import Attention, Cache, KVCache, RMSNorm, SwiGLU, causal_mask
+from eqx_zoo.layers import Attention, Cache, KVCache, RMSNorm, SparseMoE, SwiGLU, causal_mask
 
 
 class DecoderLayer(eqx.Module):
@@ -29,19 +29,27 @@ class DecoderLayer(eqx.Module):
         input_layernorm: Norm applied before attention.
         self_attn: Grouped-query attention.
         post_attention_layernorm: Norm applied before the MLP (named as in Hugging Face).
-        mlp: SwiGLU feed-forward block.
+        mlp: Feed-forward block: a SwiGLU, or a sparse mixture of SwiGLU experts.
     """
 
     input_layernorm: RMSNorm
     self_attn: Attention
     post_attention_layernorm: RMSNorm
-    mlp: SwiGLU
+    mlp: SwiGLU | SparseMoE
 
-    def __init__(self, config: Config, *, key: PRNGKeyArray, dtype: DTypeLike = jnp.float32):
+    def __init__(
+        self,
+        config: Config,
+        *,
+        moe: bool = False,
+        key: PRNGKeyArray,
+        dtype: DTypeLike = jnp.float32,
+    ):
         """Create a randomly initialised layer.
 
         Args:
             config: Model hyperparameters.
+            moe: Whether the feed-forward block is a mixture of experts.
             key: PRNG key for parameter initialisation.
             dtype: Parameter dtype.
         """
@@ -62,7 +70,20 @@ class DecoderLayer(eqx.Module):
             dtype=dtype,
         )
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=eps, dtype=dtype)
-        self.mlp = SwiGLU(config.hidden_size, config.intermediate_size, key=mlp_key, dtype=dtype)
+        if moe:
+            self.mlp = SparseMoE(
+                config.hidden_size,
+                config.moe_intermediate_size,
+                num_experts=config.num_experts,
+                num_experts_per_tok=config.num_experts_per_tok,
+                norm_topk_prob=config.norm_topk_prob,
+                key=mlp_key,
+                dtype=dtype,
+            )
+        else:
+            self.mlp = SwiGLU(
+                config.hidden_size, config.intermediate_size, key=mlp_key, dtype=dtype
+            )
 
     def __call__(
         self,
@@ -88,7 +109,10 @@ class DecoderLayer(eqx.Module):
             self.input_layernorm(x), positions, mask, cache, cache_index
         )
         x = x + attn_out
-        return x + jax.vmap(self.mlp)(self.post_attention_layernorm(x)), cache
+        h = self.post_attention_layernorm(x)
+        # A SwiGLU acts on one token, so it is vmapped; the MoE routes the whole sequence.
+        out = self.mlp(h) if isinstance(self.mlp, SparseMoE) else jax.vmap(self.mlp)(h)
+        return x + out, cache
 
 
 class DecoderModel(eqx.Module):
@@ -116,7 +140,10 @@ class DecoderModel(eqx.Module):
         self.embed_tokens = eqx.nn.Embedding(
             config.vocab_size, config.hidden_size, key=embed_key, dtype=dtype
         )
-        self.layers = [DecoderLayer(config, key=k, dtype=dtype) for k in layer_keys]
+        self.layers = [
+            DecoderLayer(config, moe=i in config.moe_layers, key=k, dtype=dtype)
+            for i, k in enumerate(layer_keys)
+        ]
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, dtype=dtype)
 
     def __call__(
@@ -285,4 +312,7 @@ class CausalLM(eqx.Module):
         config = Config.from_hf(json.loads((path / "config.json").read_text()))
         skeleton = eqx.filter_eval_shape(cls, config, key=jax.random.key(0), dtype=dtype)
         ignore = ["lm_head.weight"] if config.tie_word_embeddings else []
-        return load_safetensors(skeleton, sorted(path.glob("*.safetensors")), ignore=ignore)
+        stacked = [f"model.layers.{i}.mlp.experts" for i in config.moe_layers]
+        return load_safetensors(
+            skeleton, sorted(path.glob("*.safetensors")), ignore=ignore, stacked=stacked
+        )

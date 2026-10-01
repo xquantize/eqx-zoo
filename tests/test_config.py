@@ -97,3 +97,10 @@ def test_moe_layer_selection():
 def test_dense_configs_have_no_experts():
     config = Config.from_hf(QWEN3)
     assert config.num_experts == 0 and config.moe_layers == ()
+
+
+@pytest.mark.parametrize("key", ["num_experts", "num_local_experts"])
+def test_expert_count_under_either_name(key):
+    moe = {k: v for k, v in QWEN3_MOE.items() if k != "num_experts"}
+    config = Config.from_hf(moe | {key: 128})
+    assert config.num_experts == 128 and config.moe_layers == tuple(range(28))

@@ -108,7 +108,8 @@ class Config:
 
         num_heads = config["num_attention_heads"]
         num_layers = config["num_hidden_layers"]
-        num_experts = config.get("num_experts", 0)
+        # Saved as `num_experts` by transformers 4.x and `num_local_experts` by 5.x.
+        num_experts = config.get("num_experts") or config.get("num_local_experts", 0)
         if num_experts:
             # A layer is mixture-of-experts unless listed in `mlp_only_layers`, and only
             # every `decoder_sparse_step`-th layer is; as in the Hugging Face implementation.
