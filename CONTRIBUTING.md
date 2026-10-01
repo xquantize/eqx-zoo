@@ -46,7 +46,8 @@ Reference activations are captured from Hugging Face on first use and cached in
 ## Releasing (maintainers)
 
 1. From an up-to-date `main`: `git switch -c release/vX.Y.Z`, then `uv version --bump patch`
-   (or `minor`).
+   (or `minor`), and update `version` and
+   `date-released` in `CITATION.cff`.
 2. Commit, push, open a pull request, wait for CI, and squash-merge.
 3. `gh release create vX.Y.Z --target main --title vX.Y.Z --notes-file <notes>`. The Release
    workflow checks that the tag matches the package version, then publishes to PyPI.
