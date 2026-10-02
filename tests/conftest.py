@@ -30,22 +30,28 @@ def pytest_collection_modifyitems(items):
 
 
 @pytest.fixture(scope="session")
-def get_reference(request):
-    """Return a loader for a checkpoint's reference activations, capturing them if needed."""
+def cached_reference(request):
+    """Return `get(name, capture)`: load `reference/<name>.npz`, or create it with `capture()`."""
     regenerate = request.config.getoption("--regenerate-reference")
     loaded: dict[str, dict[str, np.ndarray]] = {}
 
-    def get(name: str) -> dict[str, np.ndarray]:
+    def get(name: str, capture) -> dict[str, np.ndarray]:
         if name not in loaded:
             path = REFERENCE_DIR / f"{name}.npz"
             if regenerate or not path.exists():
                 REFERENCE_DIR.mkdir(exist_ok=True)
-                np.savez(path, **capture(CHECKPOINTS[name]))
+                np.savez(path, **capture())
             with np.load(path) as ref:
                 loaded[name] = {key: ref[key] for key in ref.files}
         return loaded[name]
 
     return get
+
+
+@pytest.fixture(scope="session")
+def get_reference(cached_reference):
+    """Return a loader for a causal LM checkpoint's reference activations."""
+    return lambda name: cached_reference(name, lambda: capture(CHECKPOINTS[name]))
 
 
 @pytest.fixture(scope="session")

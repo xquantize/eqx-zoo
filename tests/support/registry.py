@@ -47,6 +47,12 @@ TINY_MODELS = {
     ),
 }
 
+# Pretrained encoders: test id -> Hugging Face repository.
+ENCODER_CHECKPOINTS = {
+    "all-minilm-l6-v2": "sentence-transformers/all-MiniLM-L6-v2",  # mean pooling
+    "bge-small-en-v1.5": "BAAI/bge-small-en-v1.5",  # [CLS] pooling
+}
+
 # Tiny randomly initialised encoders: test id -> (transformers config class, config overrides).
 TINY_ENCODERS = {
     # BERT: post-norm LayerNorm, learned positions, token types, biases everywhere.

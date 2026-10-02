@@ -21,7 +21,7 @@ from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo._loading import load_safetensors
 from eqx_zoo.layers import LayerNorm as _LayerNorm
-from eqx_zoo.layers import dot_product_attention
+from eqx_zoo.layers import cls_pool, dot_product_attention, l2_normalize, mean_pool
 from eqx_zoo.layers._common import linear
 from eqx_zoo.models.encoder.config import EncoderConfig
 
@@ -312,6 +312,45 @@ class EncoderStack(eqx.Module):
         self.layer = [EncoderLayer(config, key=k, dtype=dtype) for k in keys]
 
 
+_POOLING_MODES = {"cls_token": "cls", "mean_tokens": "mean"}
+
+
+def _sentence_transformers_head(path: Path) -> tuple[str | None, bool]:
+    """Read the pooling and normalisation of a sentence-transformers checkpoint.
+
+    Returns `(None, False)` for checkpoints without a `modules.json`.
+
+    Raises:
+        NotImplementedError: If the pipeline uses a pooling mode or module not supported yet.
+    """
+    modules_file = path / "modules.json"
+    if not modules_file.exists():
+        return None, False
+
+    pooling, normalize = None, False
+    for module in json.loads(modules_file.read_text()):
+        kind = module["type"].rsplit(".", 1)[-1]
+        if kind == "Transformer":
+            continue
+        if kind == "Pooling":
+            config = json.loads((path / module["path"] / "config.json").read_text())
+            modes = [
+                k.removeprefix("pooling_mode_")
+                for k, v in config.items()
+                if k.startswith("pooling_mode_") and v
+            ]
+            if len(modes) != 1 or modes[0] not in _POOLING_MODES:
+                raise NotImplementedError(
+                    f"sentence-transformers pooling {modes} is not supported yet"
+                )
+            pooling = _POOLING_MODES[modes[0]]
+        elif kind == "Normalize":
+            normalize = True
+        else:
+            raise NotImplementedError(f"sentence-transformers module {kind!r} is not supported yet")
+    return pooling, normalize
+
+
 class Encoder(eqx.Module):
     """BERT-style bidirectional encoder, returning a hidden state for every token.
 
@@ -319,17 +358,33 @@ class Encoder(eqx.Module):
         embeddings: Token, position and token-type embeddings.
         encoder: The encoder layers.
         config: Model hyperparameters.
+        pooling: How `embed` pools token states (`"mean"` or `"cls"`), or `None` if the
+            checkpoint has no sentence-transformers configuration. Defaults to `None`.
+        normalize: Whether `embed` scales embeddings to unit length.
     """
 
     embeddings: Embeddings
     encoder: EncoderStack
     config: EncoderConfig = eqx.field(static=True)
+    pooling: str | None = eqx.field(static=True)
+    normalize: bool = eqx.field(static=True)
 
-    def __init__(self, config: EncoderConfig, *, key: PRNGKeyArray, dtype: DTypeLike = jnp.float32):
+    def __init__(
+        self,
+        config: EncoderConfig,
+        *,
+        pooling: str | None = None,
+        normalize: bool = False,
+        key: PRNGKeyArray,
+        dtype: DTypeLike = jnp.float32,
+        ): 
         """Create a randomly initialised encoder.
 
         Args:
             config: Model hyperparameters.
+            pooling: How `embed` pools token states (`"mean"` or `"cls"`), or `None` if the
+                checkpoint has no sentence-transformers configuration.
+            normalize: Whether `embed` scales embeddings to unit length.
             key: PRNG key for parameter initialisation.
             dtype: Parameter dtype.
         """
@@ -337,6 +392,8 @@ class Encoder(eqx.Module):
         self.embeddings = Embeddings(config, key=embed_key, dtype=dtype)
         self.encoder = EncoderStack(config, key=encoder_key, dtype=dtype)
         self.config = config
+        self.pooling = pooling
+        self.normalize = normalize
 
     def __call__(
         self,
@@ -367,6 +424,37 @@ class Encoder(eqx.Module):
             x = layer(x, mask)
         return x
 
+    def embed(
+        self,
+        input_ids: Int[Array, " seq"],
+        attention_mask: Bool[Array, " seq"] | Int[Array, " seq"] | None = None,
+        token_type_ids: Int[Array, " seq"] | None = None,
+    ) -> Float[Array, " dim"]:
+        """Compute a sentence embedding, as the checkpoint's sentence-transformers pipeline does.
+
+        Args:
+            input_ids: Token ids.
+            attention_mask: `1` or `True` for real tokens and `0` or `False` for padding.
+                Defaults to all real.
+            token_type_ids: Token type (segment) of each token. Defaults to all zeros.
+
+        Returns:
+            The pooled (and, if configured, normalised) embedding.
+
+        Raises:
+            ValueError: If the checkpoint has no sentence-transformers pooling configuration.
+        """
+        if self.pooling is None:
+            raise ValueError("this checkpoint has no sentence-transformers pooling configuration")
+        hidden = self(input_ids, attention_mask, token_type_ids)
+        mask = (
+            jnp.ones(input_ids.shape[0], dtype=bool)
+            if attention_mask is None
+            else attention_mask.astype(bool)
+        )
+        pooled = cls_pool(hidden, mask) if self.pooling == "cls" else mean_pool(hidden, mask)
+        return l2_normalize(pooled) if self.normalize else pooled
+
     @classmethod
     def from_pretrained(
         cls,
@@ -393,9 +481,17 @@ class Encoder(eqx.Module):
                 snapshot_download(
                     str(repo_id),
                     revision=revision,
-                    allow_patterns=["config.json", "*.safetensors"],
+                    allow_patterns=[
+                        "config.json",
+                        "*.safetensors",
+                        "modules.json",
+                        "*/config.json",
+                    ],
                 )
             )
         config = EncoderConfig.from_hf(json.loads((path / "config.json").read_text()))
-        skeleton = eqx.filter_eval_shape(cls, config, key=jax.random.key(0), dtype=dtype)
+        pooling, normalize = _sentence_transformers_head(path)
+        skeleton = eqx.filter_eval_shape(
+            cls, config, pooling=pooling, normalize=normalize, key=jax.random.key(0), dtype=dtype
+        )
         return load_safetensors(skeleton, sorted(path.glob("*.safetensors")), ignore=_IGNORED)
