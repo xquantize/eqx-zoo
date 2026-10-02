@@ -77,3 +77,31 @@ def bf16_logits(model, input_ids) -> np.ndarray:
     model = model.to(torch.bfloat16)
     with torch.no_grad():
         return model(input_ids).logits[0].float().numpy()
+
+
+def capture_encoder(model, input_ids) -> dict[str, np.ndarray]:
+    """Record an encoder's embeddings, every layer's output and its final hidden states.
+
+    The batch axis is removed from every array.
+    """
+    import torch
+
+    acts: dict[str, np.ndarray] = {}
+    handles = []
+
+    def record(module, name):
+        def hook(module, args, output):
+            out = output[0] if isinstance(output, tuple) else output
+            acts[name] = out[0].detach().float().numpy()
+
+        handles.append(module.register_forward_hook(hook))
+
+    record(model.embeddings, "embed")
+    for i, layer in enumerate(model.encoder.layer):
+        record(layer, f"layer{i}")
+    with torch.no_grad():
+        hidden = model(input_ids).last_hidden_state
+    for handle in handles:
+        handle.remove()
+
+    return {"input_ids": input_ids[0].numpy(), "hidden": hidden[0].float().numpy(), **acts}

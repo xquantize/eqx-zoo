@@ -46,3 +46,9 @@ TINY_MODELS = {
         },
     ),
 }
+
+# Tiny randomly initialised encoders: test id -> (transformers config class, config overrides).
+TINY_ENCODERS = {
+    # BERT: post-norm LayerNorm, learned positions, token types, biases everywhere.
+    "tiny-bert": ("BertConfig", {}),
+}

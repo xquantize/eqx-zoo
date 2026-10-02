@@ -5,7 +5,13 @@ Attribute names mirror the corresponding Hugging Face checkpoint parameters so t
 pretrained weights can be loaded by name.
 """
 
-from eqx_zoo.layers.attention import Attention, Cache, KVCache, causal_mask
+from eqx_zoo.layers.attention import (
+    Attention,
+    Cache,
+    KVCache,
+    causal_mask,
+    dot_product_attention,
+)
 from eqx_zoo.layers.mlp import SwiGLU
 from eqx_zoo.layers.moe import SparseMoE
 from eqx_zoo.layers.norm import LayerNorm, RMSNorm
@@ -16,16 +22,17 @@ __all__ = [
     "Attention",
     "Cache",
     "KVCache",
-    "causal_mask",
-    "Llama3RopeScaling",
     "LayerNorm",
+    "Llama3RopeScaling",
     "RMSNorm",
-    "cls_pool",
-    "l2_normalize",
-    "mean_pool",
+    "SparseMoE",
     "SwiGLU",
     "apply_rope",
+    "causal_mask",
+    "cls_pool",
+    "dot_product_attention",
+    "l2_normalize",
+    "mean_pool",
     "rope_cos_sin",
     "rope_inv_freq",
-    "SparseMoE",
 ]
