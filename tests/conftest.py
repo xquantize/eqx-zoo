@@ -8,11 +8,11 @@ import pytest
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from support.reference import capture
-from support.registry import CHECKPOINTS
+from support.registry import CHECKPOINTS, ENCODER_CHECKPOINTS
 
 REFERENCE_DIR = Path(__file__).parents[1] / "reference"
-# Fixtures that read a downloaded checkpoint; tests using them are marked `checkpoint`.
-_CHECKPOINT_FIXTURES = {"qwen3_reference", "qwen3_weight"}
+# Fixtures that read a downloaded checkpoint, and which checkpoint each one needs.
+_CHECKPOINT_FIXTURES = {"qwen3_reference": "qwen3-0.6b", "qwen3_weight": "qwen3-0.6b"}
 
 
 def pytest_addoption(parser):
@@ -21,12 +21,38 @@ def pytest_addoption(parser):
         action="store_true",
         help="Recompute the Hugging Face reference activations instead of using the cache.",
     )
+    parser.addoption(
+        "--checkpoint",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Run only the tests that need this checkpoint; may be given more than once.",
+    )
 
 
-def pytest_collection_modifyitems(items):
+def pytest_collection_modifyitems(config, items):
     for item in items:
-        if _CHECKPOINT_FIXTURES & set(item.fixturenames):
-            item.add_marker(pytest.mark.checkpoint)
+        for fixture in set(item.fixturenames) & _CHECKPOINT_FIXTURES.keys():
+            item.add_marker(pytest.mark.checkpoint(_CHECKPOINT_FIXTURES[fixture]))
+        for marker in item.iter_markers("checkpoint"):
+            if not marker.args:
+                raise pytest.UsageError(
+                    f"{item.nodeid}: `checkpoint` marker needs a checkpoint name"
+                )
+
+    selected = set(config.getoption("--checkpoint"))
+    if not selected:
+        return
+    unknown = selected - CHECKPOINTS.keys() - ENCODER_CHECKPOINTS.keys()
+    if unknown:
+        raise pytest.UsageError(f"unknown checkpoints: {sorted(unknown)}")
+
+    keep, drop = [], []
+    for item in items:
+        names = {marker.args[0] for marker in item.iter_markers("checkpoint")}
+        (keep if names & selected else drop).append(item)
+    config.hook.pytest_deselected(items=drop)
+    items[:] = keep
 
 
 @pytest.fixture(scope="session")

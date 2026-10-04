@@ -24,7 +24,7 @@ class Case:
     scope="session",
     params=[
         *TINY_ENCODERS,
-        *(pytest.param(name, marks=pytest.mark.checkpoint) for name in ENCODER_CHECKPOINTS),
+        *(pytest.param(name, marks=pytest.mark.checkpoint(name)) for name in ENCODER_CHECKPOINTS),
     ],
 )
 def case(request, cached_reference, tmp_path_factory) -> Case:

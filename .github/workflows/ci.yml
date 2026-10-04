@@ -19,30 +19,65 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run ruff check
 
-  test:
-    name: test (${{ matrix.resolution }})
+  fast:
+    name: fast (${{ matrix.resolution }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - resolution: highest
             uv-args: --locked
-            pytest-args: ""
           - resolution: lowest-direct
             uv-args: --resolution lowest-direct
-            pytest-args: -m "not checkpoint"
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
-      - name: Cache checkpoints and reference activations
-        if: matrix.resolution == 'highest'
+      - name: Tiny models and unit tests (no downloads)
+        run: uv run ${{ matrix.uv-args }} pytest -v -m "not checkpoint"
+
+  checkpoints:
+    name: list checkpoints
+    runs-on: ubuntu-latest
+    outputs:
+      names: ${{ steps.list.outputs.names }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: list
+        run: |
+          names=$(python3 -c "import json, sys; sys.path.insert(0, 'tests'); from support.registry import CHECKPOINTS, ENCODER_CHECKPOINTS; print(json.dumps([*CHECKPOINTS, *ENCODER_CHECKPOINTS]))")
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+
+  checkpoint:
+    name: checkpoint (${{ matrix.name }})
+    needs: checkpoints
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        name: ${{ fromJSON(needs.checkpoints.outputs.names) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Cache this checkpoint and its reference activations
         uses: actions/cache@v6
         with:
           path: |
             ~/.cache/huggingface
             reference
-          key: models-${{ hashFiles('tests/support/registry.py', 'tests/support/reference.py') }}
-      - name: Run tests
-        run: uv run ${{ matrix.uv-args }} pytest -v ${{ matrix.pytest-args }}
+          key: checkpoint-${{ matrix.name }}-${{ hashFiles('tests/support/reference.py') }}
+      - name: Tests for ${{ matrix.name }}
+        run: uv run --locked pytest -v --checkpoint ${{ matrix.name }}
+
+  tests-passed:
+    name: tests passed
+    if: always()
+    needs: [lint, fast, checkpoint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to have succeeded
+        run: |
+          echo '${{ toJSON(needs) }}'
+          test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "false"
