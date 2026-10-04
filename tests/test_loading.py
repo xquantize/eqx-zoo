@@ -14,7 +14,7 @@ from eqx_zoo import CausalLM
 from eqx_zoo._loading import load_safetensors
 
 
-@pytest.mark.checkpoint
+@pytest.mark.checkpoint("smollm2-135m")
 def test_loads_from_local_directory():
     repo_id = CHECKPOINTS["smollm2-135m"]
     directory = snapshot_download(repo_id, allow_patterns=["config.json", "*.safetensors"])

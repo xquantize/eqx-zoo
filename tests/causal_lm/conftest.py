@@ -23,7 +23,7 @@ class Case:
     scope="session",
     params=[
         *TINY_MODELS,
-        *(pytest.param(name, marks=pytest.mark.checkpoint) for name in CHECKPOINTS),
+        *(pytest.param(name, marks=pytest.mark.checkpoint(name)) for name in CHECKPOINTS),
     ],
 )
 def case(request, get_reference, tmp_path_factory) -> Case:
