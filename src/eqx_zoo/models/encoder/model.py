@@ -1,4 +1,4 @@
-"""BERT-style bidirectional encoders.
+"""BERT- and RoBERTa-style bidirectional encoders.
 
 Module and attribute names mirror Hugging Face's `BertModel`, so checkpoints load by name.
 
@@ -38,12 +38,16 @@ class Embeddings(eqx.Module):
         position_embeddings: Learned embedding for each position.
         token_type_embeddings: Embedding for each token type (segment).
         LayerNorm: Norm applied to the summed embeddings.
+        pad_token_id: Id of the padding token.
+        padding_aware_positions: Whether positions count only non-padding tokens, as in RoBERTa.
     """
 
     word_embeddings: eqx.nn.Embedding
     position_embeddings: eqx.nn.Embedding
     token_type_embeddings: eqx.nn.Embedding
     LayerNorm: _LayerNorm
+    pad_token_id: int = eqx.field(static=True)
+    padding_aware_positions: bool = eqx.field(static=True)
 
     def __init__(self, config: EncoderConfig, *, key: PRNGKeyArray, dtype: DTypeLike):
         """Create randomly initialised embeddings.
@@ -63,6 +67,8 @@ class Embeddings(eqx.Module):
             config.type_vocab_size, dim, key=type_key, dtype=dtype
         )
         self.LayerNorm = _LayerNorm(dim, eps=config.layer_norm_eps, dtype=dtype)
+        self.pad_token_id = config.pad_token_id
+        self.padding_aware_positions = config.padding_aware_positions
 
     def __call__(
         self, input_ids: Int[Array, " seq"], token_type_ids: Int[Array, " seq"]
@@ -76,7 +82,13 @@ class Embeddings(eqx.Module):
         Returns:
             The normalised embedding of each token.
         """
-        positions = jnp.arange(input_ids.shape[0])
+        if self.padding_aware_positions:
+            # RoBERTa: real tokens are numbered from pad_token_id + 1, counting only
+            # non-padding tokens (identified by id); padding tokens get pad_token_id itself.
+            real = input_ids != self.pad_token_id
+            positions = jnp.cumsum(real) * real + self.pad_token_id
+        else:
+            positions = jnp.arange(input_ids.shape[0])
         x = (
             self.word_embeddings.weight[input_ids]
             + self.position_embeddings.weight[positions]

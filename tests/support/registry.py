@@ -51,11 +51,16 @@ TINY_MODELS = {
 ENCODER_CHECKPOINTS = {
     "all-minilm-l6-v2": "sentence-transformers/all-MiniLM-L6-v2",  # mean pooling
     "bge-small-en-v1.5": "BAAI/bge-small-en-v1.5",  # [CLS] pooling
-    "multilingual-e5-small": "intfloat/multilingual-e5-small",  # BERT with a multilingual vocabulary
+    "multilingual-e5-small": "intfloat/multilingual-e5-small",  # BERT, multilingual vocab
+    "multilingual-e5-base": "intfloat/multilingual-e5-base",  # XLM-RoBERTa, mean pooling
 }
 
 # Tiny randomly initialised encoders: test id -> (transformers config class, config overrides).
 TINY_ENCODERS = {
     # BERT: post-norm LayerNorm, learned positions, token types, biases everywhere.
     "tiny-bert": ("BertConfig", {}),
+    # RoBERTa: positions count only non-padding tokens, from pad_token_id + 1; one token type.
+    # PROMPT_IDS starts with id 1, the pad id here, so padding-aware positions are exercised.
+    "tiny-roberta": ("RobertaConfig", {"type_vocab_size": 1, "pad_token_id": 1}),
+    "tiny-xlm-roberta": ("XLMRobertaConfig", {"type_vocab_size": 1, "pad_token_id": 1}),
 }
