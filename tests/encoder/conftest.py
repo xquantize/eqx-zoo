@@ -38,3 +38,9 @@ def case(request, cached_reference, tmp_path_factory) -> Case:
         source = ENCODER_CHECKPOINTS[name]
         reference = cached_reference(name, lambda: capture_encoder_checkpoint(source))
     return Case(name, source, Encoder.from_pretrained(source, dtype=jnp.float32), reference)
+
+
+@pytest.fixture(scope="session")
+def bf16_model(case) -> Encoder:
+    """The same encoder as `case`, loaded in bfloat16 as a user would."""
+    return Encoder.from_pretrained(case.source, dtype=jnp.bfloat16)

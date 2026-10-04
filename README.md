@@ -108,7 +108,7 @@ Language models are tested against Hugging Face activations in two tiers:
 - **float32:** every layer's output must match, and greedy generation must reproduce the reference output token for token.
 - **bfloat16:** logits must be about as accurate as Hugging Face's own bfloat16, measured against its float32 output. Exact greedy agreement isn't required in bf16, since it drifts even between Hugging Face's own bf16 and float32 runs.
 
-Encoders are tested layer by layer against Hugging Face, and their embeddings must match sentence-transformers for a padded batch of sentences, in float32; bfloat16 verification for encoders is tracked in [#28](https://github.com/xquantize/eqx-zoo/issues/28).
+Encoders are tested layer by layer against Hugging Face, and their embeddings must match sentence-transformers for a padded batch of sentences, in float32. In bfloat16, their hidden states and embeddings must be about as accurate as the reference libraries' own bfloat16.
 
 Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](https://github.com/xquantize/eqx-zoo/tree/main/tests).
 

@@ -1,5 +1,6 @@
 """Tests for LayerNorm and the pooling functions used by encoders."""
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import torch
@@ -52,3 +53,32 @@ def test_l2_normalize():
     out = np.asarray(l2_normalize(jnp.asarray(x)))
     np.testing.assert_allclose(np.linalg.norm(out, axis=-1), 1.0, rtol=1e-6)
     np.testing.assert_allclose(out, x / np.linalg.norm(x, axis=-1, keepdims=True), rtol=1e-6)
+
+
+def test_layernorm_bf16_matches_torch():
+    """In bf16, LayerNorm must match PyTorch's, which computes its statistics in float32.
+
+    Correct code agrees to within one bf16 rounding step; computing the statistics in bf16
+    instead is off by thousands of steps on inputs with a non-zero mean.
+    """
+    dim = 768
+    x = (2 * rng.normal(size=(64, dim)) + 5).astype(np.float32)
+    weight = rng.normal(size=dim).astype(np.float32)
+    bias = rng.normal(size=dim).astype(np.float32)
+
+    def tb(a):
+        return torch.tensor(a).bfloat16()
+
+    expected = torch.nn.functional.layer_norm(tb(x), (dim,), tb(weight), tb(bias), eps=1e-12)
+    expected = expected.float().numpy()
+
+    bf = lambda a: jnp.asarray(a).astype(jnp.bfloat16)  # noqa: E731
+    norm = LayerNorm(dim, eps=1e-12, dtype=jnp.bfloat16)
+    norm = eqx.tree_at(lambda m: (m.weight, m.bias), norm, (bf(weight), bf(bias)))
+    out = np.asarray(norm(bf(x)).astype(jnp.float32))
+
+    ulp = 2.0 ** (np.floor(np.log2(np.maximum(np.abs(expected), 1e-30))) - 7)
+    worst = (np.abs(out - expected) / ulp).max()
+    assert worst <= 2, (
+        f"bf16 LayerNorm is {worst:.1f} bf16 steps from PyTorch's; at most 2 expected"
+    )
