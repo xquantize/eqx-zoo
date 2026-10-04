@@ -1,6 +1,6 @@
 [project]
 name = "eqx-zoo"
-version = "0.3.1"
+version = "0.3.2"
 description = "Verified Equinox ports of pretrained models, numerically matched against Hugging Face"
 readme = "README.md"
 license = "Apache-2.0"
