@@ -3,7 +3,8 @@
 As for causal LMs, our bf16 output is compared with float32 using the root-mean-square
 error, relative to the reference's own bf16 error on the same input: Hugging Face for hidden
 states, sentence-transformers for embeddings. Encoders are well conditioned in bf16: measured
-ratios are 0.84-1.25 in both eager and JIT-compiled execution, so one limit serves both.
+ratios are 0.84-1.51 in both eager and JIT-compiled execution, depending on the platform,
+so one limit serves both.
 """
 
 import equinox as eqx
@@ -13,10 +14,12 @@ import numpy as np
 import pytest
 
 # Our bf16 RMS error may be at most this multiple of the reference's own bf16 RMS error.
-# Measured worst case for correct code: 1.25 (multilingual-e5-base embeddings, eager).
-# Computing LayerNorm statistics in bf16 instead of float32 raises multilingual-e5-base to
-# about 1.6x and fails these tests; smaller models are barely affected by that bug.
-FACTOR = 1.5
+# These model-level tests catch gross bf16 errors (wrong dtypes, missing casts) on any
+# platform. Measured worst case for correct code: multilingual-e5-base embeddings, eager,
+# 1.25x on ARM and 1.51x on x86, so the limit leaves room for platform rounding differences.
+# Subtler precision bugs are too small to separate from those differences at this level,
+# so LayerNorm's float32 statistics are tested directly in tests/test_pooling.py.
+FACTOR = 2.0
 MODES = [pytest.param(False, id="eager"), pytest.param(True, id="jit")]
 
 
