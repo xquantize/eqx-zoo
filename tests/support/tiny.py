@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from support.reference import bf16_logits, capture_encoder, capture_model
+from support.reference import bf16_hidden, bf16_logits, capture_encoder, capture_model
 from support.registry import TINY_ENCODERS, TINY_MODELS
 
 # Shared by every tiny causal LM; per-model overrides live in `TINY_MODELS`.
@@ -77,4 +77,5 @@ def build_encoder(name: str, directory: Path) -> dict[str, np.ndarray]:
     _randomise(model)
 
     model.save_pretrained(directory)
-    return capture_encoder(model.eval(), torch.tensor([PROMPT_IDS]))
+    ids = torch.tensor([PROMPT_IDS])
+    return {**capture_encoder(model.eval(), ids), "bf16_hidden": bf16_hidden(model, ids)}
