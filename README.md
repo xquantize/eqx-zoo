@@ -96,7 +96,10 @@ Mixture-of-experts models, including [Qwen3-30B-A3B](https://huggingface.co/Qwen
 
 | Architecture | Verified checkpoints |
 |---|---|
-| `BertModel` | [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) |
+| `BertModel` | [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5), [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) |
+| `XLMRobertaModel` | [multilingual-e5-base](https://huggingface.co/intfloat/multilingual-e5-base) |
+
+`RobertaModel` shares the XLM-RoBERTa implementation and is verified on tiny random models.
 
 ### Verification
 
