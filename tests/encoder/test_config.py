@@ -36,3 +36,11 @@ def test_rejects_unknown_architecture():
 def test_rejects_unsupported_features(extra):
     with pytest.raises(NotImplementedError):
         EncoderConfig.from_hf(BERT | extra)
+
+
+@pytest.mark.parametrize("architecture", ["RobertaModel", "XLMRobertaModel"])
+def test_roberta_positions(architecture):
+    roberta = BERT | {"architectures": [architecture], "type_vocab_size": 1, "pad_token_id": 1}
+    config = EncoderConfig.from_hf(roberta)
+    assert config.padding_aware_positions and config.pad_token_id == 1
+    assert not EncoderConfig.from_hf(BERT).padding_aware_positions

@@ -4,7 +4,9 @@ import dataclasses
 from typing import Any
 
 _ARCHITECTURES: dict[str, dict[str, Any]] = {
-    "BertModel": {},
+    "BertModel": {"padding_aware_positions": False},
+    "RobertaModel": {"padding_aware_positions": True},
+    "XLMRobertaModel": {"padding_aware_positions": True},
 }
 
 
@@ -25,6 +27,9 @@ class EncoderConfig:
         max_position_embeddings: Number of learned position embeddings.
         type_vocab_size: Number of token types (segments).
         layer_norm_eps: Epsilon for every LayerNorm.
+        pad_token_id: Id of the padding token.
+        padding_aware_positions: Whether position ids count only non-padding tokens, starting
+            after `pad_token_id`, as in RoBERTa; otherwise positions are 0, 1, 2, ...
     """
 
     architecture: str
@@ -36,6 +41,9 @@ class EncoderConfig:
     max_position_embeddings: int
     type_vocab_size: int
     layer_norm_eps: float
+    layer_norm_eps: float
+    pad_token_id: int = 0
+    padding_aware_positions: bool = False
 
     @classmethod
     def from_hf(cls, config: dict[str, Any]) -> "EncoderConfig":
@@ -71,4 +79,6 @@ class EncoderConfig:
             max_position_embeddings=config["max_position_embeddings"],
             type_vocab_size=config.get("type_vocab_size", 2),
             layer_norm_eps=config.get("layer_norm_eps", 1e-12),
+            pad_token_id=config.get("pad_token_id", 0),
+            padding_aware_positions=_ARCHITECTURES[architecture]["padding_aware_positions"],
         )

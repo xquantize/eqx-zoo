@@ -55,7 +55,7 @@ def build(name: str, directory: Path) -> dict[str, np.ndarray]:
     import transformers
 
     config_class, overrides = TINY_MODELS[name]
-    config = getattr(transformers, config_class)(**BASE_CONFIG, **overrides)
+    config = getattr(transformers, config_class)(**(BASE_CONFIG | overrides))
     torch.manual_seed(0)
     model = transformers.AutoModelForCausalLM.from_config(config, attn_implementation="eager")
     _randomise(model)
@@ -71,7 +71,7 @@ def build_encoder(name: str, directory: Path) -> dict[str, np.ndarray]:
     import transformers
 
     config_class, overrides = TINY_ENCODERS[name]
-    config = getattr(transformers, config_class)(**ENCODER_BASE_CONFIG, **overrides)
+    config = getattr(transformers, config_class)(**(ENCODER_BASE_CONFIG | overrides))
     torch.manual_seed(0)
     model = transformers.AutoModel.from_config(config, attn_implementation="eager")
     _randomise(model)
