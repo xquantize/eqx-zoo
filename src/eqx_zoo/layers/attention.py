@@ -95,6 +95,29 @@ def causal_mask(
     return mask if key_valid is None else mask & key_valid[None, :]
 
 
+def dot_product_attention(
+    q: Float[Array, "q heads head_dim"],
+    k: Float[Array, "k heads head_dim"],
+    v: Float[Array, "k heads head_dim"],
+    mask: Bool[Array, "q k"],
+) -> Float[Array, "q heads head_dim"]:
+    """Scaled dot-product attention with a boolean mask, the softmax computed in float32.
+
+    Args:
+        q: Queries.
+        k: Keys, with the same number of heads as `q`.
+        v: Values, with the same number of heads as `q`.
+        mask: `True` where a query may attend to a key.
+
+    Returns:
+        The attention output for each query.
+    """
+    scores = jnp.einsum("qhd,khd->hqk", q, k) * q.shape[-1] ** -0.5
+    scores = jnp.where(mask[None], scores, jnp.finfo(scores.dtype).min)
+    probs = jax.nn.softmax(scores.astype(jnp.float32), axis=-1).astype(v.dtype)
+    return jnp.einsum("hqk,khd->qhd", probs, v)
+
+
 class Attention(eqx.Module):
     """Causal grouped-query attention with RoPE, optional per-head q/k norm and q/k/v bias.
 
@@ -218,9 +241,5 @@ class Attention(eqx.Module):
         k = jnp.repeat(k, groups, axis=1)
         v = jnp.repeat(v, groups, axis=1)
 
-        scores = jnp.einsum("qhd,khd->hqk", q, k) * self.head_dim**-0.5
-        scores = jnp.where(mask[None], scores, jnp.finfo(scores.dtype).min)
-        probs = jax.nn.softmax(scores.astype(jnp.float32), axis=-1).astype(v.dtype)
-
-        out = jnp.einsum("hqk,khd->qhd", probs, v).reshape(seq, self.num_heads * self.head_dim)
+        out = dot_product_attention(q, k, v, mask).reshape(seq, self.num_heads * self.head_dim)
         return jax.vmap(self.o_proj)(out), cache

@@ -77,3 +77,60 @@ def bf16_logits(model, input_ids) -> np.ndarray:
     model = model.to(torch.bfloat16)
     with torch.no_grad():
         return model(input_ids).logits[0].float().numpy()
+
+
+def capture_encoder(model, input_ids) -> dict[str, np.ndarray]:
+    """Record an encoder's embeddings, every layer's output and its final hidden states.
+
+    The batch axis is removed from every array.
+    """
+    import torch
+
+    acts: dict[str, np.ndarray] = {}
+    handles = []
+
+    def record(module, name):
+        def hook(module, args, output):
+            out = output[0] if isinstance(output, tuple) else output
+            acts[name] = out[0].detach().float().numpy()
+
+        handles.append(module.register_forward_hook(hook))
+
+    record(model.embeddings, "embed")
+    for i, layer in enumerate(model.encoder.layer):
+        record(layer, f"layer{i}")
+    with torch.no_grad():
+        hidden = model(input_ids).last_hidden_state
+    for handle in handles:
+        handle.remove()
+
+    return {"input_ids": input_ids[0].numpy(), "hidden": hidden[0].float().numpy(), **acts}
+
+
+SENTENCES = [
+    "The capital of France is Paris.",
+    "A quick brown fox jumps over the lazy dog, again and again and again.",
+    "Hello!",
+]
+
+
+def capture_encoder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
+    """Capture an encoder's HF activations and its sentence-transformers embeddings."""
+    import torch
+    from sentence_transformers import SentenceTransformer
+    from transformers import AutoModel, AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(repo_id)
+    model = AutoModel.from_pretrained(repo_id, attn_implementation="eager").float().eval()
+    reference = capture_encoder(model, tok(PROMPT, return_tensors="pt").input_ids)
+
+    st = SentenceTransformer(repo_id, device="cpu")
+    features = st.tokenize(SENTENCES)
+    types = features.get("token_type_ids", torch.zeros_like(features["input_ids"]))
+    return {
+        **reference,
+        "st_input_ids": features["input_ids"].numpy(),
+        "st_attention_mask": features["attention_mask"].numpy(),
+        "st_token_type_ids": types.numpy(),
+        "st_embeddings": st.encode(SENTENCES, convert_to_numpy=True),
+    }

@@ -10,7 +10,7 @@
 <a href="https://github.com/patrick-kidger/equinox"><img src="https://img.shields.io/badge/built%20with-Equinox-8b5cf6" alt="Built with Equinox"></a>
 </p>
 
-eqx-zoo provides pretrained models as plain [Equinox](https://github.com/patrick-kidger/equinox) modules, loaded straight from Hugging Face checkpoints and numerically verified against the reference implementation in 🤗 Transformers.
+eqx-zoo provides pretrained models as plain [Equinox](https://github.com/patrick-kidger/equinox) modules, loaded straight from Hugging Face checkpoints and numerically verified against their reference implementations: language models against 🤗 Transformers, and sentence-embedding models against [sentence-transformers](https://www.sbert.net). Since Transformers v5 removed its JAX models, eqx-zoo is a verified way to keep using them in JAX.
 
 Every model is an ordinary pytree, so `jax.jit`, `jax.grad`, `jax.vmap` and the rest of the JAX ecosystem work on it directly.
 
@@ -55,9 +55,33 @@ mask = jnp.array([e.attention_mask for e in batch])
 tokens = generate_batch(model, ids, mask, max_new_tokens=20)
 ```
 
+## Sentence embeddings
+
+`Encoder.embed` reads each checkpoint's sentence-transformers configuration and applies its own pooling and normalisation, so embeddings match sentence-transformers.
+
+```python
+import jax
+import jax.numpy as jnp
+from tokenizers import Tokenizer
+
+from eqx_zoo import Encoder
+
+tokenizer = Tokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+tokenizer.enable_padding()
+model = Encoder.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+
+batch = tokenizer.encode_batch(["The cat sits on the mat.", "A feline rests on a rug."])
+ids = jnp.array([e.ids for e in batch])
+mask = jnp.array([e.attention_mask for e in batch])
+embeddings = jax.vmap(model.embed)(ids, mask)
+print(embeddings @ embeddings.T)  # cosine similarities, as the embeddings are normalised
+```
+
 ## Models
 
-Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained`, from the Hugging Face Hub or a local directory. These checkpoints are verified by the test suite:
+Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained` or `Encoder.from_pretrained`, from the Hugging Face Hub or a local directory. These checkpoints are verified by the test suite.
+
+### Language models (`CausalLM`)
 
 | Architecture | Verified checkpoints |
 |---|---|
@@ -68,10 +92,20 @@ Any checkpoint with a supported architecture loads with `CausalLM.from_pretraine
 
 Mixture-of-experts models, including [Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B), use the same `Qwen3MoeForCausalLM` architecture; experts are computed with grouped matrix multiplications. `generate_batch` currently processes their prompts one after another ([#23](https://github.com/xquantize/eqx-zoo/issues/23)).
 
-Each verified checkpoint is tested against Hugging Face activations in two tiers:
+### Encoders and embedding models (`Encoder`)
+
+| Architecture | Verified checkpoints |
+|---|---|
+| `BertModel` | [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) |
+
+### Verification
+
+Language models are tested against Hugging Face activations in two tiers:
 
 - **float32:** every layer's output must match, and greedy generation must reproduce the reference output token for token.
 - **bfloat16:** logits must be about as accurate as Hugging Face's own bfloat16, measured against its float32 output. Exact greedy agreement isn't required in bf16, since it drifts even between Hugging Face's own bf16 and float32 runs.
+
+Encoders are tested layer by layer against Hugging Face, and their embeddings must match sentence-transformers for a padded batch of sentences, in float32; bfloat16 verification for encoders is tracked in [#28](https://github.com/xquantize/eqx-zoo/issues/28).
 
 Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](https://github.com/xquantize/eqx-zoo/tree/main/tests).
 
