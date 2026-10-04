@@ -34,10 +34,10 @@ Reference activations are captured from Hugging Face on first use and cached in
 
 ## Adding a model
 
-- **A checkpoint of a supported architecture:** add it to `CHECKPOINTS` in
-  `tests/support/registry.py` and run the full test suite.
+- **A checkpoint of a supported architecture:** add it to `CHECKPOINTS` (causal language
+  models) or `ENCODER_CHECKPOINTS` (encoders) in `tests/support/registry.py` and run the full test suite.
 - **A new architecture:** add it to the architecture table in its model class's `config.py`
-  (e.g. `src/eqx_zoo/models/causal_lm/config.py`), a tiny config to `TINY_MODELS` in
+  (e.g. `src/eqx_zoo/models/causal_lm/config.py`), a tiny config to `TINY_MODELS` or `TINY_ENCODERS` in
   `tests/support/registry.py` (commented with the code paths it covers), and at least one
   verified checkpoint to `CHECKPOINTS`.
 

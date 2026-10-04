@@ -377,7 +377,7 @@ class Encoder(eqx.Module):
         normalize: bool = False,
         key: PRNGKeyArray,
         dtype: DTypeLike = jnp.float32,
-        ): 
+    ):
         """Create a randomly initialised encoder.
 
         Args:
