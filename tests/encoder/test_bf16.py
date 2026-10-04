@@ -13,13 +13,23 @@ import numpy as np
 import pytest
 
 # Our bf16 RMS error may be at most this multiple of the reference's own bf16 RMS error.
-# Measured worst case: 1.25 (multilingual-e5-base embeddings, eager).
+# Measured worst case for correct code: 1.25 (multilingual-e5-base embeddings, eager).
+# Computing LayerNorm statistics in bf16 instead of float32 raises multilingual-e5-base to
+# about 1.6x and fails these tests; smaller models are barely affected by that bug.
 FACTOR = 1.5
 MODES = [pytest.param(False, id="eager"), pytest.param(True, id="jit")]
 
 
 def rms(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.sqrt(np.mean((a - b) ** 2)))
+
+
+def check(name: str, what: str, error: float, yardstick: float) -> None:
+    ratio = error / yardstick
+    assert ratio <= FACTOR, (
+        f"{name}: bf16 {what} RMS error {error:.3g} is {ratio:.2f}x the reference's own bf16 "
+        f"error ({yardstick:.3g}); the limit is {FACTOR}x"
+    )
 
 
 def run(model, fn, *args, jit: bool) -> np.ndarray:
@@ -41,9 +51,7 @@ def test_bf16_parameters(bf16_model):
 def test_bf16_hidden_accuracy(case, bf16_model, jit):
     ref = case.reference
     ours = run(bf16_model, lambda m, x: m(x), jnp.asarray(ref["input_ids"]), jit=jit)
-    error = rms(ours, ref["hidden"])
-    limit = FACTOR * rms(ref["bf16_hidden"], ref["hidden"])
-    assert error <= limit, f"{case.name}: bf16 hidden RMS error {error:.4g} exceeds {limit:.4g}"
+    check(case.name, "hidden", rms(ours, ref["hidden"]), rms(ref["bf16_hidden"], ref["hidden"]))
 
 
 @pytest.mark.parametrize("jit", MODES)
@@ -53,6 +61,9 @@ def test_bf16_embedding_accuracy(case, bf16_model, jit):
         pytest.skip("no sentence-transformers reference for this model")
     args = [jnp.asarray(ref[k]) for k in ("st_input_ids", "st_attention_mask", "st_token_type_ids")]
     ours = run(bf16_model, lambda m, i, a, t: jax.vmap(m.embed)(i, a, t), *args, jit=jit)
-    error = rms(ours, ref["st_embeddings"])
-    limit = FACTOR * rms(ref["st_bf16_embeddings"], ref["st_embeddings"])
-    assert error <= limit, f"{case.name}: bf16 embedding RMS error {error:.4g} exceeds {limit:.4g}"
+    check(
+        case.name,
+        "embedding",
+        rms(ours, ref["st_embeddings"]),
+        rms(ref["st_bf16_embeddings"], ref["st_embeddings"]),
+    )
