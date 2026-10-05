@@ -138,8 +138,12 @@ def capture_encoder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
     ids = tok(PROMPT, return_tensors="pt").input_ids
     reference = capture_encoder(model, ids)
 
-    st = SentenceTransformer(repo_id, device="cpu")
-    features = st.tokenize(SENTENCES)
+    # Load in float32 explicitly: sentence-transformers otherwise uses the checkpoint's
+    # stored dtype, which would make a bf16-stored model's reference bf16.
+    st = SentenceTransformer(repo_id, device="cpu").to(torch.float32)
+    # `tokenize` was renamed `preprocess`; older releases only have `tokenize`.
+    tokenize = st.preprocess if hasattr(st, "preprocess") else st.tokenize
+    features = tokenize(SENTENCES)
     types = features.get("token_type_ids", torch.zeros_like(features["input_ids"]))
     st_embeddings = st.encode(SENTENCES, convert_to_numpy=True)
     st_bf16 = st.to(torch.bfloat16).encode(SENTENCES, convert_to_tensor=True).float().numpy()
