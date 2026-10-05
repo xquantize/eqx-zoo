@@ -39,3 +39,9 @@ def case(request, cached_reference, tmp_path_factory) -> Case:
         reference = cached_reference(name, lambda: capture_embedder_checkpoint(source))
     model = DecoderEmbedder.from_pretrained(source, dtype=jnp.float32)
     return Case(name, source, model, reference)
+
+
+@pytest.fixture(scope="session")
+def bf16_model(case) -> DecoderEmbedder:
+    """The same embedder as `case`, loaded in bfloat16 as a user would."""
+    return DecoderEmbedder.from_pretrained(case.source, dtype=jnp.bfloat16)
