@@ -47,6 +47,12 @@ Reference activations are captured from Hugging Face on first use and cached in
 - Pull requests that claim a performance change should include before/after numbers from
   `uv run python benchmarks/generation.py <repo_id> [--dtype bfloat16]`.
 
+## Reporting results on GPUs and TPUs
+
+The test suite runs on CPU. If you run eqx-zoo on a GPU or TPU, please share what you find
+using the **Accelerator verification report** issue template: it lists the settings and
+measurements that make results from different devices comparable.
+
 ## Versioning
 
 eqx-zoo follows semantic versioning, adapted for releases before 1.0.
