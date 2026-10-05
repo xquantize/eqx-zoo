@@ -8,7 +8,7 @@ import pytest
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from support.reference import capture
-from support.registry import CHECKPOINTS, ENCODER_CHECKPOINTS
+from support.registry import ALL_CHECKPOINTS, CHECKPOINTS
 
 REFERENCE_DIR = Path(__file__).parents[1] / "reference"
 # Fixtures that read a downloaded checkpoint, and which checkpoint each one needs.
@@ -43,7 +43,7 @@ def pytest_collection_modifyitems(config, items):
     selected = set(config.getoption("--checkpoint"))
     if not selected:
         return
-    unknown = selected - CHECKPOINTS.keys() - ENCODER_CHECKPOINTS.keys()
+    unknown = selected - ALL_CHECKPOINTS.keys()
     if unknown:
         raise pytest.UsageError(f"unknown checkpoints: {sorted(unknown)}")
 

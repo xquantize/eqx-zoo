@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@v7
       - id: list
         run: |
-          names=$(python3 -c "import json, sys; sys.path.insert(0, 'tests'); from support.registry import CHECKPOINTS, ENCODER_CHECKPOINTS; print(json.dumps([*CHECKPOINTS, *ENCODER_CHECKPOINTS]))")
+          names=$(python3 -c "import json, sys; sys.path.insert(0, 'tests'); from support.registry import ALL_CHECKPOINTS; print(json.dumps(list(ALL_CHECKPOINTS)))")
           echo "names=$names" >> "$GITHUB_OUTPUT"
 
   checkpoint:
