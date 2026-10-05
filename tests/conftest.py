@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,6 +10,11 @@ from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from support.reference import capture
 from support.registry import ALL_CHECKPOINTS, CHECKPOINTS
+
+# Request true float32 matrix multiplications. On accelerators, JAX's default float32 matmul
+# precision can use reduced-precision arithmetic internally (e.g. TF32 on NVIDIA GPUs), which
+# would make the float32 parity tests compare something other than float32. No effect on CPU.
+jax.config.update("jax_default_matmul_precision", "highest")
 
 REFERENCE_DIR = Path(__file__).parents[1] / "reference"
 # Fixtures that read a downloaded checkpoint, and which checkpoint each one needs.
