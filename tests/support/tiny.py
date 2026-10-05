@@ -4,8 +4,14 @@ from pathlib import Path
 
 import numpy as np
 
-from support.reference import bf16_hidden, bf16_logits, capture_encoder, capture_model
-from support.registry import TINY_ENCODERS, TINY_MODELS
+from support.reference import (
+    bf16_hidden,
+    bf16_logits,
+    capture_decoder,
+    capture_encoder,
+    capture_model,
+)
+from support.registry import TINY_EMBEDDERS, TINY_ENCODERS, TINY_MODELS
 
 # Shared by every tiny causal LM; per-model overrides live in `TINY_MODELS`.
 BASE_CONFIG = {
@@ -79,3 +85,19 @@ def build_encoder(name: str, directory: Path) -> dict[str, np.ndarray]:
     model.save_pretrained(directory)
     ids = torch.tensor([PROMPT_IDS])
     return {**capture_encoder(model.eval(), ids), "bf16_hidden": bf16_hidden(model, ids)}
+
+
+def build_embedder(name: str, directory: Path) -> dict[str, np.ndarray]:
+    """Create a seeded random headless decoder, save it to `directory`, and capture references."""
+    import torch
+    import transformers
+
+    config_class, overrides = TINY_EMBEDDERS[name]
+    config = getattr(transformers, config_class)(**(BASE_CONFIG | overrides))
+    torch.manual_seed(0)
+    model = transformers.AutoModel.from_config(config, attn_implementation="eager")
+    _randomise(model)
+
+    model.save_pretrained(directory)
+    ids = torch.tensor([PROMPT_IDS])
+    return {**capture_decoder(model.eval(), ids), "bf16_hidden": bf16_hidden(model, ids)}
