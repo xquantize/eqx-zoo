@@ -77,9 +77,26 @@ embeddings = jax.vmap(model.embed)(ids, mask)
 print(embeddings @ embeddings.T)  # cosine similarities, as the embeddings are normalised
 ```
 
+Decoder-based embedding models such as Qwen3-Embedding work the same way, through `DecoderEmbedder`. For search, queries take the instruction prompt from the model's sentence-transformers configuration; documents are embedded as they are.
+
+```python
+from eqx_zoo import DecoderEmbedder
+
+model = DecoderEmbedder.from_pretrained("Qwen/Qwen3-Embedding-0.6B")
+tokenizer = Tokenizer.from_pretrained("Qwen/Qwen3-Embedding-0.6B")
+tokenizer.enable_padding()
+
+prompt = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
+batch = tokenizer.encode_batch([prompt + "What is the capital of France?", "Paris is the capital of France."])
+ids = jnp.array([e.ids for e in batch])
+mask = jnp.array([e.attention_mask for e in batch])
+query, passage = jax.vmap(model.embed)(ids, mask)
+print(query @ passage)  # cosine similarity
+```
+
 ## Models
 
-Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained` or `Encoder.from_pretrained`, from the Hugging Face Hub or a local directory. These checkpoints are verified by the test suite.
+Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained` or `Encoder.from_pretrained`, from the Hugging Face Hub or a local directory. These checkpoints are verified by the test suite, and collected on the Hugging Face Hub in [Verified in eqx-zoo](https://huggingface.co/collections/xquantize/verified-in-eqx-zoo-6ac2d731fd1ef3e109541bf7).
 
 ### Language models (`CausalLM`)
 
@@ -101,6 +118,12 @@ Mixture-of-experts models, including [Qwen3-30B-A3B](https://huggingface.co/Qwen
 
 `RobertaModel` shares the XLM-RoBERTa implementation and is verified on tiny random models.
 
+### Decoder embedding models (`DecoderEmbedder`)
+
+| Architecture | Verified checkpoints |
+|---|---|
+| `Qwen3ForCausalLM` (saved without a head) | [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) |
+
 ### Verification
 
 Language models are tested against Hugging Face activations in two tiers:
@@ -108,7 +131,7 @@ Language models are tested against Hugging Face activations in two tiers:
 - **float32:** every layer's output must match, and greedy generation must reproduce the reference output token for token.
 - **bfloat16:** logits must be about as accurate as Hugging Face's own bfloat16, measured against its float32 output. Exact greedy agreement isn't required in bf16, since it drifts even between Hugging Face's own bf16 and float32 runs.
 
-Encoders are tested layer by layer against Hugging Face, and their embeddings must match sentence-transformers for a padded batch of sentences, in float32. In bfloat16, their hidden states and embeddings must be about as accurate as the reference libraries' own bfloat16.
+Encoders and decoder embedders are tested layer by layer against Hugging Face, and their embeddings must match sentence-transformers for a padded batch of sentences, in float32. In bfloat16, their hidden states and embeddings must be about as accurate as the reference libraries' own bfloat16.
 
 Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](https://github.com/xquantize/eqx-zoo/tree/main/tests).
 
