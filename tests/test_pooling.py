@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import torch
 
-from eqx_zoo.layers import LayerNorm, cls_pool, l2_normalize, mean_pool
+from eqx_zoo.layers import LayerNorm, cls_pool, l2_normalize, last_token_pool, mean_pool
 
 rng = np.random.default_rng(0)
 
@@ -82,3 +82,14 @@ def test_layernorm_bf16_matches_torch():
     assert worst <= 2, (
         f"bf16 LayerNorm is {worst:.1f} bf16 steps from PyTorch's; at most 2 expected"
     )
+
+
+def test_last_token_pool_takes_last_real_token():
+    hidden = rng.normal(size=(6, 4)).astype(np.float32)
+    right_padded = np.array([True, True, True, True, False, False])
+    left_padded = np.array([False, False, True, True, True, True])
+    unpadded = np.ones(6, dtype=bool)
+    for mask, expected in [(right_padded, 3), (left_padded, 5), (unpadded, 5)]:
+        np.testing.assert_array_equal(
+            last_token_pool(jnp.asarray(hidden), jnp.asarray(mask)), hidden[expected]
+        )

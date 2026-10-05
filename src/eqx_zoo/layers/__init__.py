@@ -15,7 +15,7 @@ from eqx_zoo.layers.attention import (
 from eqx_zoo.layers.mlp import SwiGLU
 from eqx_zoo.layers.moe import SparseMoE
 from eqx_zoo.layers.norm import LayerNorm, RMSNorm
-from eqx_zoo.layers.pooling import cls_pool, l2_normalize, mean_pool
+from eqx_zoo.layers.pooling import cls_pool, l2_normalize, last_token_pool, mean_pool
 from eqx_zoo.layers.rope import Llama3RopeScaling, apply_rope, rope_cos_sin, rope_inv_freq
 
 __all__ = [
@@ -32,6 +32,7 @@ __all__ = [
     "cls_pool",
     "dot_product_attention",
     "l2_normalize",
+    "last_token_pool",
     "mean_pool",
     "rope_cos_sin",
     "rope_inv_freq",
