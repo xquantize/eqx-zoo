@@ -4,8 +4,17 @@ from importlib.metadata import version
 
 from eqx_zoo.generation import generate, generate_batch
 from eqx_zoo.layers import Cache
-from eqx_zoo.models.causal_lm import CausalLM, Config
+from eqx_zoo.models.causal_lm import CausalLM, Config, DecoderEmbedder
 from eqx_zoo.models.encoder import Encoder, EncoderConfig
 
-__all__ = ["Cache", "CausalLM", "Config", "Encoder", "EncoderConfig", "generate", "generate_batch"]
+__all__ = [
+    "Cache",
+    "CausalLM",
+    "Config",
+    "DecoderEmbedder",
+    "Encoder",
+    "EncoderConfig",
+    "generate",
+    "generate_batch",
+]
 __version__ = version("eqx-zoo")

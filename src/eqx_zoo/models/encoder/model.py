@@ -20,8 +20,9 @@ from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo._loading import load_safetensors
+from eqx_zoo._sentence_transformers import pool, read_pipeline
 from eqx_zoo.layers import LayerNorm as _LayerNorm
-from eqx_zoo.layers import cls_pool, dot_product_attention, l2_normalize, mean_pool
+from eqx_zoo.layers import dot_product_attention
 from eqx_zoo.layers._common import linear
 from eqx_zoo.models.encoder.config import EncoderConfig
 
@@ -324,45 +325,6 @@ class EncoderStack(eqx.Module):
         self.layer = [EncoderLayer(config, key=k, dtype=dtype) for k in keys]
 
 
-_POOLING_MODES = {"cls_token": "cls", "mean_tokens": "mean"}
-
-
-def _sentence_transformers_head(path: Path) -> tuple[str | None, bool]:
-    """Read the pooling and normalisation of a sentence-transformers checkpoint.
-
-    Returns `(None, False)` for checkpoints without a `modules.json`.
-
-    Raises:
-        NotImplementedError: If the pipeline uses a pooling mode or module not supported yet.
-    """
-    modules_file = path / "modules.json"
-    if not modules_file.exists():
-        return None, False
-
-    pooling, normalize = None, False
-    for module in json.loads(modules_file.read_text()):
-        kind = module["type"].rsplit(".", 1)[-1]
-        if kind == "Transformer":
-            continue
-        if kind == "Pooling":
-            config = json.loads((path / module["path"] / "config.json").read_text())
-            modes = [
-                k.removeprefix("pooling_mode_")
-                for k, v in config.items()
-                if k.startswith("pooling_mode_") and v
-            ]
-            if len(modes) != 1 or modes[0] not in _POOLING_MODES:
-                raise NotImplementedError(
-                    f"sentence-transformers pooling {modes} is not supported yet"
-                )
-            pooling = _POOLING_MODES[modes[0]]
-        elif kind == "Normalize":
-            normalize = True
-        else:
-            raise NotImplementedError(f"sentence-transformers module {kind!r} is not supported yet")
-    return pooling, normalize
-
-
 class Encoder(eqx.Module):
     """BERT-style bidirectional encoder, returning a hidden state for every token.
 
@@ -464,8 +426,7 @@ class Encoder(eqx.Module):
             if attention_mask is None
             else attention_mask.astype(bool)
         )
-        pooled = cls_pool(hidden, mask) if self.pooling == "cls" else mean_pool(hidden, mask)
-        return l2_normalize(pooled) if self.normalize else pooled
+        return pool(hidden, mask, self.pooling, self.normalize)
 
     @classmethod
     def from_pretrained(
@@ -502,7 +463,7 @@ class Encoder(eqx.Module):
                 )
             )
         config = EncoderConfig.from_hf(json.loads((path / "config.json").read_text()))
-        pooling, normalize = _sentence_transformers_head(path)
+        pooling, normalize = read_pipeline(path)
         skeleton = eqx.filter_eval_shape(
             cls, config, pooling=pooling, normalize=normalize, key=jax.random.key(0), dtype=dtype
         )

@@ -43,3 +43,21 @@ def l2_normalize(x: Float[Array, "*batch dim"], eps: float = 1e-12) -> Float[Arr
     """
     norm = jnp.linalg.norm(x, axis=-1, keepdims=True)
     return x / jnp.maximum(norm, eps)
+
+
+def last_token_pool(
+    hidden: Float[Array, "seq dim"], mask: Bool[Array, " seq"]
+) -> Float[Array, " dim"]:
+    """Take the hidden state of the last real token, as decoder embedding models do.
+
+    Works with both left and right padding.
+
+    Args:
+        hidden: Hidden state of each token.
+        mask: `True` for real tokens, `False` for padding.
+
+    Returns:
+        The last real token's hidden state.
+    """
+    last = mask.shape[0] - 1 - jnp.argmax(mask[::-1])
+    return hidden[last]

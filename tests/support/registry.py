@@ -64,3 +64,17 @@ TINY_ENCODERS = {
     "tiny-roberta": ("RobertaConfig", {"type_vocab_size": 1, "pad_token_id": 1}),
     "tiny-xlm-roberta": ("XLMRobertaConfig", {"type_vocab_size": 1, "pad_token_id": 1}),
 }
+
+# Decoder-based embedding models: test id -> Hugging Face repository.
+EMBEDDER_CHECKPOINTS = {
+    "qwen3-embedding-0.6b": "Qwen/Qwen3-Embedding-0.6B",  # last-token pooling
+}
+
+# Tiny decoder embedders: test id -> (transformers config class, config overrides).
+TINY_EMBEDDERS = {
+    # A Qwen3 decoder saved without a language-model head, as embedding models are.
+    "tiny-qwen3-embedder": ("Qwen3Config", {"tie_word_embeddings": True, "head_dim": 32}),
+}
+
+# Every registered checkpoint: used to validate --checkpoint and to create CI jobs.
+ALL_CHECKPOINTS = {**CHECKPOINTS, **ENCODER_CHECKPOINTS, **EMBEDDER_CHECKPOINTS}
