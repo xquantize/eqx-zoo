@@ -123,20 +123,10 @@ SENTENCES = [
 ]
 
 
-def capture_encoder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
-    """Capture an encoder's HF activations and its sentence-transformers embeddings.
-
-    Also records bf16 yardsticks: Hugging Face's bf16 hidden states and sentence-transformers'
-    bf16 embeddings.
-    """
+def capture_sentence_transformers(repo_id: str) -> dict[str, np.ndarray]:
+    """Capture sentence-transformers' tokenization and embeddings, in float32 and bf16."""
     import torch
     from sentence_transformers import SentenceTransformer
-    from transformers import AutoModel, AutoTokenizer
-
-    tok = AutoTokenizer.from_pretrained(repo_id)
-    model = AutoModel.from_pretrained(repo_id, attn_implementation="eager").float().eval()
-    ids = tok(PROMPT, return_tensors="pt").input_ids
-    reference = capture_encoder(model, ids)
 
     # Load in float32 explicitly: sentence-transformers otherwise uses the checkpoint's
     # stored dtype, which would make a bf16-stored model's reference bf16.
@@ -145,15 +135,26 @@ def capture_encoder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
     tokenize = st.preprocess if hasattr(st, "preprocess") else st.tokenize
     features = tokenize(SENTENCES)
     types = features.get("token_type_ids", torch.zeros_like(features["input_ids"]))
-    st_embeddings = st.encode(SENTENCES, convert_to_numpy=True)
-    st_bf16 = st.to(torch.bfloat16).encode(SENTENCES, convert_to_tensor=True).float().numpy()
-
+    embeddings = st.encode(SENTENCES, convert_to_numpy=True)
+    bf16 = st.to(torch.bfloat16).encode(SENTENCES, convert_to_tensor=True).float().numpy()
     return {
-        **reference,
-        "bf16_hidden": bf16_hidden(model, ids),
         "st_input_ids": features["input_ids"].numpy(),
         "st_attention_mask": features["attention_mask"].numpy(),
         "st_token_type_ids": types.numpy(),
-        "st_embeddings": st_embeddings,
-        "st_bf16_embeddings": st_bf16,
+        "st_embeddings": embeddings,
+        "st_bf16_embeddings": bf16,
+    }
+
+
+def capture_encoder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
+    """Capture an encoder's HF activations and its sentence-transformers embeddings."""
+    from transformers import AutoModel, AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(repo_id)
+    model = AutoModel.from_pretrained(repo_id, attn_implementation="eager").float().eval()
+    ids = tok(PROMPT, return_tensors="pt").input_ids
+    return {
+        **capture_encoder(model, ids),
+        "bf16_hidden": bf16_hidden(model, ids),
+        **capture_sentence_transformers(repo_id),
     }
