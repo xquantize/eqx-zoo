@@ -86,8 +86,12 @@ model = DecoderEmbedder.from_pretrained("Qwen/Qwen3-Embedding-0.6B")
 tokenizer = Tokenizer.from_pretrained("Qwen/Qwen3-Embedding-0.6B")
 tokenizer.enable_padding()
 
-prompt = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
-batch = tokenizer.encode_batch([prompt + "What is the capital of France?", "Paris is the capital of France."])
+prompt = (
+    "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
+)
+batch = tokenizer.encode_batch(
+    [prompt + "What is the capital of France?", "Paris is the capital of France."]
+)
 ids = jnp.array([e.ids for e in batch])
 mask = jnp.array([e.attention_mask for e in batch])
 query, passage = jax.vmap(model.embed)(ids, mask)
