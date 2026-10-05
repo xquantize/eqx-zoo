@@ -14,6 +14,15 @@ _ARCHITECTURES: dict[str, dict[str, bool]] = {
 }
 
 
+# Decoders saved without a language-model head, as embedding models often are, use their
+# base-model architecture names; they share the settings of the full models.
+_ARCHITECTURES |= {
+    "LlamaModel": _ARCHITECTURES["LlamaForCausalLM"],
+    "Qwen2Model": _ARCHITECTURES["Qwen2ForCausalLM"],
+    "Qwen3Model": _ARCHITECTURES["Qwen3ForCausalLM"],
+}
+
+
 @dataclasses.dataclass(frozen=True)
 class Config:
     """Hyperparameters of a decoder-only language model.
