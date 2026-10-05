@@ -158,3 +158,45 @@ def capture_encoder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
         "bf16_hidden": bf16_hidden(model, ids),
         **capture_sentence_transformers(repo_id),
     }
+
+
+def capture_decoder(model, input_ids) -> dict[str, np.ndarray]:
+    """Record a headless decoder's embeddings, every layer's output and final hidden states.
+
+    The batch axis is removed from every array.
+    """
+    import torch
+
+    acts: dict[str, np.ndarray] = {}
+    handles = []
+
+    def record(module, name):
+        def hook(module, args, output):
+            out = output[0] if isinstance(output, tuple) else output
+            acts[name] = out[0].detach().float().numpy()
+
+        handles.append(module.register_forward_hook(hook))
+
+    record(model.embed_tokens, "embed")
+    for i, layer in enumerate(model.layers):
+        record(layer, f"layer{i}")
+    with torch.no_grad():
+        hidden = model(input_ids).last_hidden_state
+    for handle in handles:
+        handle.remove()
+
+    return {"input_ids": input_ids[0].numpy(), "hidden": hidden[0].float().numpy(), **acts}
+
+
+def capture_embedder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
+    """Capture a decoder embedder's HF activations and its sentence-transformers embeddings."""
+    from transformers import AutoModel, AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(repo_id)
+    model = AutoModel.from_pretrained(repo_id, attn_implementation="eager").float().eval()
+    ids = tok(PROMPT, return_tensors="pt").input_ids
+    return {
+        **capture_decoder(model, ids),
+        "bf16_hidden": bf16_hidden(model, ids),
+        **capture_sentence_transformers(repo_id),
+    }
