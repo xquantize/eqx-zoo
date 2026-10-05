@@ -137,6 +137,8 @@ Language models are tested against Hugging Face activations in two tiers:
 
 Encoders and decoder embedders are tested layer by layer against Hugging Face, and their embeddings must match sentence-transformers for a padded batch of sentences, in float32. In bfloat16, their hidden states and embeddings must be about as accurate as the reference libraries' own bfloat16.
 
+On GPUs and TPUs, JAX's default float32 matrix multiplications may use reduced precision internally (for example TF32 on recent NVIDIA GPUs), so float32 results can differ noticeably from a float32 reference. To request true float32, set `jax.config.update("jax_default_matmul_precision", "highest")`, or use `with jax.default_matmul_precision("highest"):` for a block of code. The test suite requests highest precision.
+
 Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](https://github.com/xquantize/eqx-zoo/tree/main/tests).
 
 ## Development
