@@ -200,3 +200,54 @@ def capture_embedder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
         "bf16_hidden": bf16_hidden(model, ids),
         **capture_sentence_transformers(repo_id),
     }
+
+
+# An original passage used twice: repeated text gives many confident predictions in its second
+# half, where position bugs are glaring. Positions beyond 256 matter because bf16 represents
+# integers exactly only up to 256.
+LONG_TEXT = (
+    "The old lighthouse stood at the edge of the harbour for more than a century, and in that "
+    "time it watched the town change around it. Fishing boats gave way to ferries, the wooden "
+    "piers were rebuilt in concrete, and the narrow lanes behind the market filled with cafes "
+    "and small shops. Every evening, the keeper climbed the spiral staircase, checked the lamp, "
+    "and wrote a few lines in a logbook that had been kept since the first night the light was "
+    "lit. The entries were short: the direction of the wind, the height of the waves, the ships "
+    "that passed, and sometimes a note about a storm that kept the town awake. When the light "
+    "was finally automated, the logbooks were moved to the town library, where students now "
+    "read them to learn how the weather, the trade, and the people of the coast had changed "
+    "over the years. Some of them noticed that the handwriting changed every few decades, as "
+    "one keeper retired and another took over, but the habit of recording each night never "
+    "stopped. In winter the storms were long and fierce, and the keepers wrote about waves "
+    "breaking over the harbour wall, about boats that came home late, and about the lamp that "
+    "had to be cleaned twice a night because of the salt. In summer the entries were calmer, "
+    "describing clear evenings, visiting yachts, and children who came to watch the sunset from "
+    "the rocks below the tower."
+)
+LONG_LENGTH = 512
+
+
+def capture_long_decisions(repo_id: str) -> dict[str, np.ndarray]:
+    """Float32 decisions and their margins on a long input, and Hugging Face's bf16 noise.
+
+    Stores, for each position, float32's top-1 token and the gap between its top two logits,
+    plus sigma: the RMS difference between Hugging Face's bf16 and float32 logits.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    ids = AutoTokenizer.from_pretrained(repo_id)(LONG_TEXT + " " + LONG_TEXT).input_ids
+    assert len(ids) >= LONG_LENGTH, f"long input has only {len(ids)} tokens"
+    ids = ids[:LONG_LENGTH]
+    model = AutoModelForCausalLM.from_pretrained(repo_id, attn_implementation="eager")
+    model = model.float().eval()
+    x = torch.tensor([ids])
+    with torch.no_grad():
+        fp32 = model(x).logits[0]
+        bf16 = model.to(torch.bfloat16)(x).logits[0].float()
+    top2 = fp32.topk(2).values
+    return {
+        "long_input_ids": np.array(ids),
+        "long_top1": fp32.argmax(-1).numpy(),
+        "long_margin": (top2[:, 0] - top2[:, 1]).numpy(),
+        "long_sigma": np.array(float((bf16 - fp32).pow(2).mean().sqrt())),
+    }
