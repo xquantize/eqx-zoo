@@ -49,6 +49,12 @@ def pytest_collection_modifyitems(config, items):
 
     selected = set(config.getoption("--checkpoint"))
     if not selected:
+        # Checkpoint tests download and load real models, so they only run when asked for:
+        # with --checkpoint NAME, or with a marker expression such as -m checkpoint.
+        if not config.getoption("markexpr"):
+            skipped = [item for item in items if item.get_closest_marker("checkpoint")]
+            config.hook.pytest_deselected(items=skipped)
+            items[:] = [item for item in items if not item.get_closest_marker("checkpoint")]
         return
     unknown = selected - ALL_CHECKPOINTS.keys()
     if unknown:
@@ -60,6 +66,11 @@ def pytest_collection_modifyitems(config, items):
         (keep if names & selected else drop).append(item)
     config.hook.pytest_deselected(items=drop)
     items[:] = keep
+
+
+def pytest_report_header(config):
+    if not config.getoption("--checkpoint") and not config.getoption("markexpr"):
+        return "checkpoint tests: not run (use --checkpoint NAME, or -m checkpoint for all)"
 
 
 @pytest.fixture(scope="session")

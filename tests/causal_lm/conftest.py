@@ -20,7 +20,7 @@ class Case:
 
 
 @pytest.fixture(
-    scope="session",
+    scope="package",
     params=[
         *TINY_MODELS,
         *(pytest.param(name, marks=pytest.mark.checkpoint(name)) for name in CHECKPOINTS),
@@ -39,7 +39,7 @@ def case(request, get_reference, tmp_path_factory) -> Case:
     return Case(name, source, CausalLM.from_pretrained(source, dtype=jnp.float32), reference)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="package")
 def bf16_model(case) -> CausalLM:
     """The same model as `case`, loaded in bfloat16 as a user would."""
     return CausalLM.from_pretrained(case.source, dtype=jnp.bfloat16)
