@@ -8,8 +8,8 @@ authors:
 repository-code: "https://github.com/xquantize/eqx-zoo"
 url: "https://pypi.org/project/eqx-zoo/"
 license: Apache-2.0
-version: 0.3.2
-date-released: "2026-10-05"
+version: 0.3.3
+date-released: "2026-10-08"
 keywords:
   - jax
   - equinox
