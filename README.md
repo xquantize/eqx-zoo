@@ -133,9 +133,11 @@ Mixture-of-experts models, including [Qwen3-30B-A3B](https://huggingface.co/Qwen
 Language models are tested against Hugging Face activations in two tiers:
 
 - **float32:** every layer's output must match, and greedy generation must reproduce the reference output token for token.
-- **bfloat16:** logits must be about as accurate as Hugging Face's own bfloat16, measured against its float32 output. Exact greedy agreement isn't required in bf16, since it drifts even between Hugging Face's own bf16 and float32 runs.
+- **bfloat16:** logits must be about as accurate as Hugging Face's own bfloat16, measured against its float32 output. Exact greedy agreement isn't required in bf16, since near-tied decisions flip even in Hugging Face's own bf16. Instead, on a 512-token input, bf16 decisions must match float32's wherever float32 is confident (its top two logits differ by more than 8 times Hugging Face's own bf16 noise), both in a full forward pass and in cached decoding. Precision-critical blocks (attention's softmax and LayerNorm) are also tested directly in bf16 against the reference arithmetic.
 
 Encoders and decoder embedders are tested layer by layer against Hugging Face, and their embeddings must match sentence-transformers for a padded batch of sentences, in float32. In bfloat16, their hidden states and embeddings must be about as accurate as the reference libraries' own bfloat16.
+
+On GPUs and TPUs, JAX's default float32 matrix multiplications may use reduced precision internally (TF32 on recent NVIDIA GPUs, bfloat16 on TPUs), so float32 results can differ noticeably from a float32 reference. Request the most accurate setting, which is true float32 on GPUs and close to it on TPUs, with `jax.config.update("jax_default_matmul_precision", "highest")`, or `with jax.default_matmul_precision("highest"):` for a block of code. Setting the environment variable `JAX_DEFAULT_MATMUL_PRECISION=highest` does the same without changing any code, which is a quick way to check whether precision explains a difference. The test suite requests highest precision.
 
 Every architecture is also tested on tiny randomly initialised models, which cover code paths that no single checkpoint exercises. See [`tests/`](https://github.com/xquantize/eqx-zoo/tree/main/tests).
 

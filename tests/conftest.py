@@ -2,13 +2,20 @@
 
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
-from support.reference import capture
+from support.reference import capture, capture_long_decisions
 from support.registry import ALL_CHECKPOINTS, CHECKPOINTS
+
+# Request the most accurate float32 matrix multiplications. On accelerators, JAX's default
+# float32 matmul precision can use reduced-precision arithmetic internally (TF32 on NVIDIA
+# GPUs, bfloat16 on TPUs), which would make the float32 parity tests compare something
+# other than float32. No effect on CPU.
+jax.config.update("jax_default_matmul_precision", "highest")
 
 REFERENCE_DIR = Path(__file__).parents[1] / "reference"
 # Fixtures that read a downloaded checkpoint, and which checkpoint each one needs.
@@ -77,7 +84,10 @@ def cached_reference(request):
 @pytest.fixture(scope="session")
 def get_reference(cached_reference):
     """Return a loader for a causal LM checkpoint's reference activations."""
-    return lambda name: cached_reference(name, lambda: capture(CHECKPOINTS[name]))
+    return lambda name: cached_reference(
+        name,
+        lambda: {**capture(CHECKPOINTS[name]), **capture_long_decisions(CHECKPOINTS[name])},
+    )
 
 
 @pytest.fixture(scope="session")
