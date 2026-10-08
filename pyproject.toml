@@ -30,6 +30,11 @@ Homepage = "https://github.com/xquantize/eqx-zoo"
 Repository = "https://github.com/xquantize/eqx-zoo"
 Issues = "https://github.com/xquantize/eqx-zoo/issues"
 
+[project.optional-dependencies]
+# NVIDIA GPU support on Linux (including WSL2); a no-op elsewhere, since JAX supports only the
+# CPU on macOS and native Windows.
+cuda = ["jax[cuda13]; sys_platform == 'linux'"]
+
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
