@@ -25,6 +25,11 @@ need 1-4 GB), and every run prints its peak memory. `uv run pytest -m checkpoint
 in a single process instead, which needs more memory. For most changes the fast tests are
 enough locally: CI runs every checkpoint on each pull request.
 
+On Linux with an NVIDIA GPU, `uv sync --extra cuda` installs JAX's CUDA build; run commands with
+`uv run --extra cuda ...`, and check the GPU is used with
+`uv run --extra cuda python -c "import jax; print(jax.devices())"`. On macOS and native Windows the
+extra changes nothing. Results from GPUs are very welcome: see "Reporting results on GPUs and TPUs".
+
 ## Conventions
 
 - Modules act on a single unbatched sequence; batch with `jax.vmap`.

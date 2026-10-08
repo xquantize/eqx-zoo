@@ -22,6 +22,8 @@ pip install eqx-zoo
 
 Requires Python 3.12+. The example below also uses `pip install tokenizers`.
 
+On Linux with an NVIDIA GPU (including WSL2 on Windows), install the `cuda` extra to get JAX's CUDA build: `pip install "eqx-zoo[cuda]"`. On macOS and native Windows, JAX runs on the CPU and the extra changes nothing. For older drivers that need CUDA 12, install `jax[cuda12]` at the same version as `jax` instead.
+
 ## Quick example
 
 ```python
