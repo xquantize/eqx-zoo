@@ -1,5 +1,6 @@
 """Shared pytest options and fixtures: the reference cache and checkpoint weights."""
 
+import sys
 from pathlib import Path
 
 import jax
@@ -113,3 +114,14 @@ def qwen3_weight():
     path = Path(snapshot_download(CHECKPOINTS["qwen3-0.6b"], allow_patterns=["*.safetensors"]))
     with safe_open(path / "model.safetensors", framework="pt") as f:
         yield lambda name: jnp.asarray(f.get_tensor(name).float().numpy())
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Report the run's peak memory, so contributors can see what each checkpoint needs."""
+    try:
+        import resource
+    except ImportError:  # not available on Windows
+        return
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    gigabytes = peak / 2**30 if sys.platform == "darwin" else peak / 2**20  # bytes vs KiB
+    terminalreporter.write_line(f"peak memory: {gigabytes:.1f} GB")
