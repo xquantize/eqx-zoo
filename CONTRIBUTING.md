@@ -9,13 +9,21 @@ every change comes with tests that prove it.
 ```bash
 git clone https://github.com/xquantize/eqx-zoo && cd eqx-zoo
 uv sync
-uv run pytest -m "not checkpoint"   # fast: tiny random models, no downloads
-uv run pytest                       # full: also downloads and verifies checkpoints
+uv run pytest                              # fast: tiny models and unit tests, no downloads
+uv run pytest --checkpoint smollm2-135m    # one pretrained checkpoint, as CI runs them
+scripts/test-checkpoints.sh                # every checkpoint, one process each
 uv run ruff format && uv run ruff check
 ```
 
 Reference activations are captured from Hugging Face on first use and cached in
-`reference/`; `uv run pytest --regenerate-reference` refreshes them.
+`reference/`; add `--regenerate-reference` to refresh them, for example
+`uv run pytest --checkpoint smollm2-135m --regenerate-reference`.
+
+Checkpoint tests download and load real models, so plain `uv run pytest` leaves them out.
+Run with the script, each checkpoint needs at most about 7 GB of memory (Llama 3.2 1B; most
+need 1-4 GB), and every run prints its peak memory. `uv run pytest -m checkpoint` runs them all
+in a single process instead, which needs more memory. For most changes the fast tests are
+enough locally: CI runs every checkpoint on each pull request.
 
 ## Conventions
 
