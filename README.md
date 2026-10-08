@@ -146,8 +146,9 @@ Every architecture is also tested on tiny randomly initialised models, which cov
 ```bash
 git clone https://github.com/xquantize/eqx-zoo && cd eqx-zoo
 uv sync
-uv run pytest -m "not checkpoint"   # fast: tiny random models, no downloads
-uv run pytest                       # full: also downloads and verifies checkpoints
+uv run pytest                              # fast: tiny models and unit tests, no downloads
+uv run pytest --checkpoint smollm2-135m    # one pretrained checkpoint, as CI runs them
+scripts/test-checkpoints.sh                # every checkpoint, one process each
 uv run python benchmarks/generation.py Qwen/Qwen3-0.6B   # load, compile and throughput
 ```
 

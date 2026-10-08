@@ -21,7 +21,7 @@ class Case:
 
 
 @pytest.fixture(
-    scope="session",
+    scope="package",
     params=[
         *TINY_ENCODERS,
         *(pytest.param(name, marks=pytest.mark.checkpoint(name)) for name in ENCODER_CHECKPOINTS),
@@ -40,7 +40,7 @@ def case(request, cached_reference, tmp_path_factory) -> Case:
     return Case(name, source, Encoder.from_pretrained(source, dtype=jnp.float32), reference)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="package")
 def bf16_model(case) -> Encoder:
     """The same encoder as `case`, loaded in bfloat16 as a user would."""
     return Encoder.from_pretrained(case.source, dtype=jnp.bfloat16)
