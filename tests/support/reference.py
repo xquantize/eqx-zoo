@@ -251,3 +251,20 @@ def capture_long_decisions(repo_id: str) -> dict[str, np.ndarray]:
         "long_margin": (top2[:, 0] - top2[:, 1]).numpy(),
         "long_sigma": np.array(float((bf16 - fp32).pow(2).mean().sqrt())),
     }
+
+
+def capture_gradients(model, input_ids) -> dict[str, np.ndarray]:
+    """Gradients of the mean next-token cross-entropy, as `grad.<parameter name>`.
+
+    Uses the loss transformers computes with `labels=input_ids`. Call this before anything
+    converts `model` to another dtype.
+    """
+    model.zero_grad()
+    model(input_ids, labels=input_ids).loss.backward()
+    grads = {
+        f"grad.{name}": param.grad.detach().float().numpy()
+        for name, param in model.named_parameters()
+        if param.grad is not None
+    }
+    model.zero_grad()
+    return grads

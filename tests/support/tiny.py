@@ -9,6 +9,7 @@ from support.reference import (
     bf16_logits,
     capture_decoder,
     capture_encoder,
+    capture_gradients,
     capture_model,
 )
 from support.registry import TINY_EMBEDDERS, TINY_ENCODERS, TINY_MODELS
@@ -68,7 +69,9 @@ def build(name: str, directory: Path) -> dict[str, np.ndarray]:
 
     model.save_pretrained(directory)
     ids = torch.tensor([PROMPT_IDS])
-    return {**capture_model(model.eval(), ids), "bf16_logits": bf16_logits(model, ids)}
+    reference = capture_model(model.eval(), ids)
+    reference |= capture_gradients(model, ids)  # before bf16_logits converts the model
+    return reference | {"bf16_logits": bf16_logits(model, ids)}
 
 
 def build_encoder(name: str, directory: Path) -> dict[str, np.ndarray]:
