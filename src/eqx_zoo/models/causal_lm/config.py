@@ -52,6 +52,7 @@ class Config:
             sum to one.
         moe_layers: Indices of the decoder layers that are mixture-of-experts; the others
             use a dense MLP.
+        pad_token_id: Id of the padding token, whose embedding is never trained, or `None`.
     """
 
     architecture: str
@@ -73,6 +74,7 @@ class Config:
     moe_intermediate_size: int = 0
     norm_topk_prob: bool = False
     moe_layers: tuple[int, ...] = ()
+    pad_token_id: int | None = None
 
     @classmethod
     def from_hf(cls, config: dict[str, Any]) -> "Config":
@@ -149,4 +151,5 @@ class Config:
             moe_intermediate_size=config.get("moe_intermediate_size", 0),
             norm_topk_prob=config.get("norm_topk_prob", False),
             moe_layers=moe_layers,
+            pad_token_id=config.get("pad_token_id"),
         )

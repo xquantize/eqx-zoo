@@ -122,11 +122,13 @@ class DecoderModel(eqx.Module):
         embed_tokens: Token embedding table.
         layers: Decoder layers, applied in order.
         norm: Final RMSNorm.
+        pad_token_id: Id of the padding token, whose embedding is never trained, or `None`.
     """
 
     embed_tokens: eqx.nn.Embedding
     layers: list[DecoderLayer]
     norm: RMSNorm
+    pad_token_id: int | None = eqx.field(static=True)
 
     def __init__(self, config: Config, *, key: PRNGKeyArray, dtype: DTypeLike = jnp.float32):
         """Create a randomly initialised decoder stack.
@@ -145,6 +147,7 @@ class DecoderModel(eqx.Module):
             for i, k in enumerate(layer_keys)
         ]
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, dtype=dtype)
+        self.pad_token_id = config.pad_token_id
 
     def __call__(
         self,
@@ -167,6 +170,11 @@ class DecoderModel(eqx.Module):
             Normalised hidden states for each token, and the updated caches (or `None`).
         """
         x = self.embed_tokens.weight[input_ids]
+        if self.pad_token_id is not None:
+            # As with PyTorch's `padding_idx`: the padding token's embedding is used as is but
+            # never trained through the lookup, so no gradient reaches it from here.
+            is_pad = (input_ids == self.pad_token_id)[:, None]
+            x = jnp.where(is_pad, jax.lax.stop_gradient(x), x)
         if caches is None:
             for layer in self.layers:
                 x, _ = layer(x, positions, mask)
