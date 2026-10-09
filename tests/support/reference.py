@@ -268,3 +268,25 @@ def capture_gradients(model, input_ids) -> dict[str, np.ndarray]:
     }
     model.zero_grad()
     return grads
+
+
+def capture_hidden_gradients(model, input_ids) -> dict[str, np.ndarray]:
+    """Gradients of sum(hidden * probe), for models without a language-model head.
+
+    The probe is a fixed random array the shape of the final hidden states, stored as
+    `grad_probe` so the JAX side uses the same one. Call before anything converts `model`
+    to another dtype.
+    """
+    import torch
+
+    model.zero_grad()
+    hidden = model(input_ids).last_hidden_state[0]
+    probe = np.random.default_rng(0).normal(size=tuple(hidden.shape)).astype(np.float32)
+    (hidden * torch.from_numpy(probe)).sum().backward()
+    grads = {
+        f"grad.{name}": param.grad.detach().float().numpy()
+        for name, param in model.named_parameters()
+        if param.grad is not None
+    }
+    model.zero_grad()
+    return {"grad_probe": probe, **grads}

@@ -10,6 +10,7 @@ from support.reference import (
     capture_decoder,
     capture_encoder,
     capture_gradients,
+    capture_hidden_gradients,
     capture_model,
 )
 from support.registry import TINY_EMBEDDERS, TINY_ENCODERS, TINY_MODELS
@@ -87,7 +88,9 @@ def build_encoder(name: str, directory: Path) -> dict[str, np.ndarray]:
 
     model.save_pretrained(directory)
     ids = torch.tensor([PROMPT_IDS])
-    return {**capture_encoder(model.eval(), ids), "bf16_hidden": bf16_hidden(model, ids)}
+    reference = capture_encoder(model.eval(), ids)
+    reference |= capture_hidden_gradients(model, ids)  # before bf16_hidden converts the model
+    return reference | {"bf16_hidden": bf16_hidden(model, ids)}
 
 
 def build_embedder(name: str, directory: Path) -> dict[str, np.ndarray]:
@@ -103,4 +106,6 @@ def build_embedder(name: str, directory: Path) -> dict[str, np.ndarray]:
 
     model.save_pretrained(directory)
     ids = torch.tensor([PROMPT_IDS])
-    return {**capture_decoder(model.eval(), ids), "bf16_hidden": bf16_hidden(model, ids)}
+    reference = capture_decoder(model.eval(), ids)
+    reference |= capture_hidden_gradients(model, ids)  # before bf16_hidden converts the model
+    return reference | {"bf16_hidden": bf16_hidden(model, ids)}
