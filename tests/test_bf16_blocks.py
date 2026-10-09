@@ -40,5 +40,5 @@ def test_attention_bf16_matches_reference_arithmetic():
     bf = lambda a: jnp.asarray(a).astype(jnp.bfloat16)  # noqa: E731
     mask = jnp.ones((q_len, k_len), dtype=bool)
     out = np.asarray(dot_product_attention(bf(q), bf(k), bf(v), mask).astype(jnp.float32))
-    
+
     np.testing.assert_allclose(out, expected, rtol=2**-7, atol=2**-11)
