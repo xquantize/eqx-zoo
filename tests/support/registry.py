@@ -29,7 +29,7 @@ TINY_MODELS = {
         },
     ),
     # q/k/v bias and an untied output head.
-    "tiny-qwen2": ("Qwen2Config", {"tie_word_embeddings": False}),
+    "tiny-qwen2": ("Qwen2Config", {"tie_word_embeddings": False, "pad_token_id": 1}),
     # Per-head q/k norm, with head_dim (32) != hidden_size / num_attention_heads (16).
     "tiny-qwen3": ("Qwen3Config", {"tie_word_embeddings": True, "head_dim": 32}),
     # Routed experts (2 of 8, renormalised), a dense layer mixed in via `mlp_only_layers`,
