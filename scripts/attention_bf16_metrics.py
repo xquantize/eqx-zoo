@@ -24,6 +24,7 @@ expected = (probs @ tv).transpose(0, 1).float().numpy()
 
 
 def broken(q, k, v, mask):
+    """Attention with the softmax computed in bf16: the bug the test must catch."""
     scores = jnp.einsum("qhd,khd->hqk", q, k) * q.shape[-1] ** -0.5
     scores = jnp.where(mask[None], scores, jnp.finfo(scores.dtype).min)
     return jnp.einsum("hqk,khd->qhd", jax.nn.softmax(scores, axis=-1).astype(v.dtype), v)
@@ -38,5 +39,7 @@ for name, fn in [("correct", dot_product_attention), ("broken", broken)]:
     steps = np.abs(out - expected) / ulp
     rel_rms = np.linalg.norm(out - expected) / np.linalg.norm(expected)
     violations = int((~np.isclose(out, expected, rtol=2**-7, atol=2**-11)).sum())
-    print(f"{name:8s} max steps {steps.max():9.1f}  mean steps {steps.mean():7.3f}  "
-          f"relative RMS {rel_rms:.2e}  allclose violations {violations}")
+    print(
+        f"{name:8s} max steps {steps.max():9.1f}  mean steps {steps.mean():7.3f}  "
+        f"relative RMS {rel_rms:.2e}  allclose violations {violations}"
+    )

@@ -24,8 +24,10 @@ def bf16_steps(out: np.ndarray, expected: np.ndarray) -> np.ndarray:
 def test_attention_bf16_matches_reference_arithmetic():
     """In bf16, attention must match Hugging Face's: float32 softmax, then a bf16 cast.
 
-    Correct code is within 2 bf16 steps (almost every value is bit-identical); computing
-    the softmax in bf16 instead is off by thousands of steps over 1,024 keys.
+    Measured over 1,024 keys, correct code averages 0.001 bf16 steps from the reference on
+    CPU and 0.004 on an NVIDIA GPU; computing the softmax in bf16 averages 5.4 on both. The
+    mean is used rather than the maximum because near zero a bf16 step is tiny, so a few
+    values can be many steps off without being wrong (up to 20 on the GPU, 2 on CPU).
     """
     q_len, k_len, heads, dim = 64, 1024, 4, 64
     q = rng.normal(size=(q_len, heads, dim)).astype(np.float32)
@@ -41,4 +43,7 @@ def test_attention_bf16_matches_reference_arithmetic():
     mask = jnp.ones((q_len, k_len), dtype=bool)
     out = np.asarray(dot_product_attention(bf(q), bf(k), bf(v), mask).astype(jnp.float32))
 
-    np.testing.assert_allclose(out, expected, rtol=2**-7, atol=2**-11)
+    mean = bf16_steps(out, expected).mean()
+    assert mean <= 0.05, (
+        f"bf16 attention is {mean:.3f} bf16 steps from the reference on average; at most 0.05"
+    )
