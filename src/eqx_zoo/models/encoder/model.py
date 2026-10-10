@@ -90,11 +90,16 @@ class Embeddings(eqx.Module):
             positions = jnp.cumsum(real) * real + self.pad_token_id
         else:
             positions = jnp.arange(input_ids.shape[0])
-        x = (
-            self.word_embeddings.weight[input_ids]
-            + self.position_embeddings.weight[positions]
-            + self.token_type_embeddings.weight[token_type_ids]
-        )
+        words = self.word_embeddings.weight[input_ids]
+        position = self.position_embeddings.weight[positions]
+        # As with PyTorch's `padding_idx`: the padding token's embedding is used as is but
+        # never trained, so no gradient reaches it. In RoBERTa, padding tokens also take the
+        # padding position, whose embedding is likewise never trained.
+        is_pad = (input_ids == self.pad_token_id)[:, None]
+        words = jnp.where(is_pad, jax.lax.stop_gradient(words), words)
+        if self.padding_aware_positions:
+            position = jnp.where(is_pad, jax.lax.stop_gradient(position), position)
+        x = words + position + self.token_type_embeddings.weight[token_type_ids]
         return self.LayerNorm(x)
 
 
