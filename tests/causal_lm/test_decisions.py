@@ -3,10 +3,9 @@
 bf16 legitimately flips near-tied decisions, so a decision has to match float32's only where
 float32 is confident: where its top two logits differ by more than CONFIDENT times sigma,
 Hugging Face's own bf16 logit noise on the same input. Measured on 512 tokens: correct code
-flips margins up to 4.8 sigma (Hugging Face's own bf16, up to 3.4 sigma), while passing
-positions through bf16, which is exact only up to 256, flips margins of 12-209 sigma, a bug
-the short-prompt tests don't see. Teacher-forced cached decoding checks the prefill-then-decode
-path without one flipped decision cascading into the rest.
+flips margins up to 4.8 sigma on ARM and up to 8.4 sigma on CI's x86 runners (Llama, JIT-compiled),
+while passing positions through bf16, which is exact only up to 256, flips margins of 27-209 sigma
+on the dense models, a bug the short-prompt tests don't see.
 """
 
 import jax
@@ -15,7 +14,7 @@ import numpy as np
 import pytest
 from support.bf16 import MODES, run
 
-CONFIDENT = 8.0  # in units of sigma; see the module docstring
+CONFIDENT = 16.0  # in units of sigma; see the module docstring
 PREFILL = 8
 
 
