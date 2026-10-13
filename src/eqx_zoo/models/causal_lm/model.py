@@ -17,7 +17,7 @@ import jax.numpy as jnp
 from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
-from eqx_zoo._loading import load_safetensors
+from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetensors
 from eqx_zoo.layers import Attention, Cache, KVCache, RMSNorm, SparseMoE, SwiGLU, causal_mask
 from eqx_zoo.models.causal_lm.config import Config
 
@@ -194,17 +194,28 @@ class CausalLM(eqx.Module):
         model: The decoder stack.
         lm_head: Output projection, or `None` when tied to the token embedding.
         config: Model hyperparameters.
+        hf_config: The checkpoint's `config.json` text, kept for `save_pretrained`, or `None`
+            for a model that wasn't loaded with `from_pretrained`.
     """
 
     model: DecoderModel
     lm_head: eqx.nn.Linear | None
     config: Config = eqx.field(static=True)
+    hf_config: str | None = eqx.field(static=True)
 
-    def __init__(self, config: Config, *, key: PRNGKeyArray, dtype: DTypeLike = jnp.float32):
+    def __init__(
+        self,
+        config: Config,
+        *,
+        hf_config: str | None = None,
+        key: PRNGKeyArray,
+        dtype: DTypeLike = jnp.float32,
+    ):
         """Create a randomly initialised model.
 
         Args:
             config: Model hyperparameters.
+            hf_config: The checkpoint's config.json text, or None.
             key: PRNG key for parameter initialisation.
             dtype: Parameter dtype.
         """
@@ -217,6 +228,7 @@ class CausalLM(eqx.Module):
                 config.hidden_size, config.vocab_size, use_bias=False, key=head_key, dtype=dtype
             )
         self.config = config
+        self.hf_config = hf_config
 
     def __call__(
         self,
@@ -317,10 +329,47 @@ class CausalLM(eqx.Module):
                     allow_patterns=["config.json", "*.safetensors"],
                 )
             )
-        config = Config.from_hf(json.loads((path / "config.json").read_text()))
-        skeleton = eqx.filter_eval_shape(cls, config, key=jax.random.key(0), dtype=dtype)
+        hf_config = (path / "config.json").read_text()
+        config = Config.from_hf(json.loads(hf_config))
+        skeleton = eqx.filter_eval_shape(
+            cls, config, hf_config=hf_config, key=jax.random.key(0), dtype=dtype
+        )
         ignore = ["lm_head.weight"] if config.tie_word_embeddings else []
         stacked = [f"model.layers.{i}.mlp.experts" for i in config.moe_layers]
         return load_safetensors(
             skeleton, sorted(path.glob("*.safetensors")), ignore=ignore, stacked=stacked
         )
+
+    def save_pretrained(self, directory: str | os.PathLike[str]) -> None:
+        """Save in Hugging Face format, as `config.json` and `model.safetensors`.
+
+        Writes back the `config.json` the model was loaded with, with its dtype set to that
+        of the saved parameters, so Hugging Face Transformers loads it like the original.
+
+        Args:
+            directory: Destination directory; created if needed.
+
+        Raises:
+            ValueError: If the model wasn't loaded with `from_pretrained`, so there is no
+                original `config.json` to write back.
+        """
+        if self.hf_config is None:
+            raise ValueError(
+                "only models loaded with from_pretrained can be saved: there is no original "
+                "config.json to write back"
+            )
+        path = Path(directory)
+        path.mkdir(parents=True, exist_ok=True)
+
+        config = json.loads(self.hf_config)
+        dtype = jnp.dtype(self.model.embed_tokens.weight.dtype).name
+        # transformers 4 reads `torch_dtype`, transformers 5 reads `dtype`.
+        keys = [k for k in ("torch_dtype", "dtype") if k in config] or ["torch_dtype"]
+        for key in keys:
+            config[key] = dtype
+        (path / "config.json").write_text(
+            config_with_dtype(self.hf_config, self.model.embed_tokens.weight.dtype)
+        )
+
+        stacked = [f"model.layers.{i}.mlp.experts" for i in self.config.moe_layers]
+        save_safetensors(self, path / "model.safetensors", stacked=stacked)

@@ -10,6 +10,21 @@ from eqx_zoo.layers import cls_pool, l2_normalize, last_token_pool, mean_pool
 # sentence-transformers pooling modes -> our names for them.
 _MODES = {"cls_token": "cls", "mean_tokens": "mean", "lasttoken": "last_token"}
 _POOL = {"cls": cls_pool, "mean": mean_pool, "last_token": last_token_pool}
+_FILES = ("modules.json", "config_sentence_transformers.json", "sentence_bert_config.json")
+
+
+def read_files(path: Path) -> tuple[tuple[str, str], ...]:
+    """A checkpoint's sentence-transformers configuration files, as (relative path, text)."""
+    names = [name for name in _FILES if (path / name).exists()]
+    names += sorted(str(p.relative_to(path)) for p in path.glob("*/config.json"))
+    return tuple((name, (path / name).read_text()) for name in names)
+
+
+def write_files(path: Path, files: tuple[tuple[str, str], ...]) -> None:
+    """Write files read by `read_files` back into a checkpoint directory."""
+    for name, text in files:
+        (path / name).parent.mkdir(parents=True, exist_ok=True)
+        (path / name).write_text(text)
 
 
 def read_pipeline(path: Path) -> tuple[str | None, bool]:

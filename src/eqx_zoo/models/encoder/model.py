@@ -19,8 +19,8 @@ import jax.numpy as jnp
 from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
-from eqx_zoo._loading import load_safetensors
-from eqx_zoo._sentence_transformers import pool, read_pipeline
+from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetensors
+from eqx_zoo._sentence_transformers import pool, read_files, read_pipeline, write_files
 from eqx_zoo.layers import LayerNorm as _LayerNorm
 from eqx_zoo.layers import dot_product_attention
 from eqx_zoo.layers._common import linear
@@ -340,6 +340,9 @@ class Encoder(eqx.Module):
         pooling: How `embed` pools token states (`"mean"` or `"cls"`), or `None` if the
             checkpoint has no sentence-transformers configuration. Defaults to `None`.
         normalize: Whether `embed` scales embeddings to unit length.
+        hf_config: The checkpoint's `config.json` text, kept for `save_pretrained`, or `None`.
+        st_files: The checkpoint's sentence-transformers configuration files, kept for
+            `save_pretrained`.
     """
 
     embeddings: Embeddings
@@ -347,6 +350,8 @@ class Encoder(eqx.Module):
     config: EncoderConfig = eqx.field(static=True)
     pooling: str | None = eqx.field(static=True)
     normalize: bool = eqx.field(static=True)
+    hf_config: str | None = eqx.field(static=True)
+    st_files: tuple[tuple[str, str], ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -354,6 +359,8 @@ class Encoder(eqx.Module):
         *,
         pooling: str | None = None,
         normalize: bool = False,
+        hf_config: str | None = None,
+        st_files: tuple[tuple[str, str], ...] = (),
         key: PRNGKeyArray,
         dtype: DTypeLike = jnp.float32,
     ):
@@ -364,6 +371,8 @@ class Encoder(eqx.Module):
             pooling: How `embed` pools token states (`"mean"` or `"cls"`), or `None` if the
                 checkpoint has no sentence-transformers configuration.
             normalize: Whether `embed` scales embeddings to unit length.
+            hf_config: The checkpoint's config.json text, or None.
+            st_files: The checkpoint's sentence-transformers files.
             key: PRNG key for parameter initialisation.
             dtype: Parameter dtype.
         """
@@ -373,6 +382,8 @@ class Encoder(eqx.Module):
         self.config = config
         self.pooling = pooling
         self.normalize = normalize
+        self.hf_config = hf_config
+        self.st_files = st_files
 
     def __call__(
         self,
@@ -464,12 +475,49 @@ class Encoder(eqx.Module):
                         "*.safetensors",
                         "modules.json",
                         "*/config.json",
+                        "config_sentence_transformers.json",
+                        "sentence_bert_config.json",
                     ],
                 )
             )
-        config = EncoderConfig.from_hf(json.loads((path / "config.json").read_text()))
+        hf_config = (path / "config.json").read_text()
+        config = EncoderConfig.from_hf(json.loads(hf_config))
         pooling, normalize = read_pipeline(path)
         skeleton = eqx.filter_eval_shape(
-            cls, config, pooling=pooling, normalize=normalize, key=jax.random.key(0), dtype=dtype
+            cls,
+            config,
+            pooling=pooling,
+            normalize=normalize,
+            hf_config=hf_config,
+            st_files=read_files(path),
+            key=jax.random.key(0),
+            dtype=dtype,
         )
         return load_safetensors(skeleton, sorted(path.glob("*.safetensors")), ignore=_IGNORED)
+
+    def save_pretrained(self, directory: str | os.PathLike[str]) -> None:
+        """Save in Hugging Face and sentence-transformers format.
+
+        Writes `config.json` (with its dtype set to the saved parameters'), the checkpoint's
+        sentence-transformers configuration files, and `model.safetensors`. The tokenizer
+        isn't part of the model: save it separately, as with Hugging Face models. BERT's
+        pooler isn't kept, so Hugging Face initialises a new one if a model needs it.
+
+        Args:
+            directory: Destination directory; created if needed.
+
+        Raises:
+            ValueError: If the model wasn't loaded with `from_pretrained`.
+        """
+        if self.hf_config is None:
+            raise ValueError(
+                "only models loaded with from_pretrained can be saved: there is no original "
+                "config.json to write back"
+            )
+        path = Path(directory)
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "config.json").write_text(
+            config_with_dtype(self.hf_config, self.embeddings.word_embeddings.weight.dtype)
+        )
+        write_files(path, self.st_files)
+        save_safetensors(self, path / "model.safetensors")
