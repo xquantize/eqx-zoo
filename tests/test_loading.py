@@ -1,5 +1,6 @@
 """Tests for loading checkpoints."""
 
+import shutil
 from pathlib import Path
 
 import equinox as eqx
@@ -7,11 +8,13 @@ import jax
 import numpy as np
 import pytest
 from huggingface_hub import snapshot_download
+from safetensors import safe_open
 from safetensors.numpy import save_file
-from support.registry import CHECKPOINTS
+from support.registry import CHECKPOINTS, TINY_MODELS
+from support.tiny import build
 
 from eqx_zoo import CausalLM
-from eqx_zoo._loading import load_safetensors
+from eqx_zoo._loading import load_safetensors, save_safetensors
 
 
 @pytest.mark.checkpoint("smollm2-135m")
@@ -84,3 +87,26 @@ def test_stacked_extra_layer(tmp_path):
     path = toy_checkpoint(tmp_path, **{"layers.2.weight": np.zeros((2, 3), np.float32)})
     with pytest.raises(ValueError, match="unexpected"):
         load_safetensors(Toy(jax.random.key(0)), [path], stacked=["layers"])
+
+
+@pytest.mark.parametrize("name", list(TINY_MODELS))
+def test_save_safetensors_round_trip(name, tmp_path):
+    source, target = tmp_path / "source", tmp_path / "saved"
+    build(name, source)
+    model = CausalLM.from_pretrained(source)
+
+    target.mkdir()
+    stacked = [f"model.layers.{i}.mlp.experts" for i in model.config.moe_layers]
+    save_safetensors(model, target / "model.safetensors", stacked=stacked)
+    shutil.copy(source / "config.json", target / "config.json")
+
+    with (
+        safe_open(source / "model.safetensors", "np") as ours,
+        safe_open(target / "model.safetensors", "np") as theirs,
+    ):
+        assert set(theirs.keys()) == set(ours.keys())
+
+    reloaded = CausalLM.from_pretrained(target)
+    leaves = lambda m: jax.tree.leaves(eqx.filter(m, eqx.is_array))  # noqa: E731
+    for a, b in zip(leaves(model), leaves(reloaded), strict=True):
+        np.testing.assert_array_equal(a, b)

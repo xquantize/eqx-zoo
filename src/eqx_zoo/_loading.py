@@ -4,6 +4,7 @@ from collections.abc import Collection, Iterable
 from contextlib import ExitStack
 from pathlib import Path
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from safetensors import safe_open
@@ -96,3 +97,29 @@ def load_safetensors[T](
             f"checkpoint has {len(unexpected)} unexpected parameters: {unexpected[:5]}"
         )
     return jax.tree_util.tree_unflatten(treedef, loaded)
+
+
+def save_safetensors(model, file: str | Path, *, stacked: Collection[str] = ()) -> None:
+    """Write a model's arrays to a safetensors file, named as `load_safetensors` reads them.
+
+    The inverse of `load_safetensors`: each array leaf is saved under its attribute path,
+    e.g. `model.norm.weight`, and leaves under a `stacked` path are split along their leading
+    axis into one tensor per layer, e.g. `model.layers.0.mlp.up_proj.weight`, ...
+
+    Args:
+        model: Module to save.
+        file: Destination file.
+        stacked: Attribute paths of modules stored with a leading layer axis, as for
+            `load_safetensors`.
+    """
+    from safetensors.flax import save_file
+
+    tensors = {}
+    for path, leaf in jax.tree_util.tree_flatten_with_path(eqx.filter(model, eqx.is_array))[0]:
+        name = _path_to_name(path)
+        layer_names = _layer_names(name, leaf.shape[0], stacked) if leaf.ndim else None
+        if layer_names is None:
+            tensors[name] = leaf
+        else:
+            tensors.update(zip(layer_names, leaf, strict=True))
+    save_file(tensors, str(file), metadata={"format": "pt"})
