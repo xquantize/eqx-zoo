@@ -100,6 +100,18 @@ query, passage = jax.vmap(model.embed)(ids, mask)
 print(query @ passage)  # cosine similarity
 ```
 
+## Saving models
+
+Models loaded with `from_pretrained` can be saved back in Hugging Face format, for example after fine-tuning, so that Transformers, sentence-transformers or the Hub can use them:
+
+```python
+model = Encoder.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+# ... fine-tune with any JAX optimiser ...
+model.save_pretrained("my-embedder")
+```
+
+`save_pretrained` writes the original `config.json` (with its dtype updated), any sentence-transformers configuration, and the weights as safetensors. The tokenizer isn't part of the model, so save it alongside, for example with `AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2").save_pretrained("my-embedder")`. Saving is verified by loading the result with Transformers and sentence-transformers and reproducing the reference outputs.
+
 ## Models
 
 Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained` or `Encoder.from_pretrained`, from the Hugging Face Hub or a local directory. These checkpoints are verified by the test suite, and collected on the Hugging Face Hub in [Verified in eqx-zoo](https://huggingface.co/collections/xquantize/verified-in-eqx-zoo-6ac2d731fd1ef3e109541bf7).
