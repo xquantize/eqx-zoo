@@ -17,7 +17,7 @@ import jax.numpy as jnp
 from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
-from eqx_zoo._loading import load_safetensors, save_safetensors
+from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetensors
 from eqx_zoo.layers import Attention, Cache, KVCache, RMSNorm, SparseMoE, SwiGLU, causal_mask
 from eqx_zoo.models.causal_lm.config import Config
 
@@ -367,7 +367,9 @@ class CausalLM(eqx.Module):
         keys = [k for k in ("torch_dtype", "dtype") if k in config] or ["torch_dtype"]
         for key in keys:
             config[key] = dtype
-        (path / "config.json").write_text(json.dumps(config, indent=2) + "\n")
+        (path / "config.json").write_text(
+            config_with_dtype(self.hf_config, self.model.embed_tokens.weight.dtype)
+        )
 
         stacked = [f"model.layers.{i}.mlp.experts" for i in self.config.moe_layers]
         save_safetensors(self, path / "model.safetensors", stacked=stacked)

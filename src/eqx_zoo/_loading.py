@@ -1,5 +1,6 @@
 """Load safetensors checkpoints into Equinox modules by parameter name."""
 
+import json
 from collections.abc import Collection, Iterable
 from contextlib import ExitStack
 from pathlib import Path
@@ -8,6 +9,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from safetensors import safe_open
+
+
+def config_with_dtype(text: str, dtype) -> str:
+    """A `config.json` text with its dtype set to `dtype`, where transformers 4 and 5 read it."""
+    config = json.loads(text)
+    # transformers 4 reads `torch_dtype`, transformers 5 reads `dtype`.
+    for key in [k for k in ("torch_dtype", "dtype") if k in config] or ["torch_dtype"]:
+        config[key] = jnp.dtype(dtype).name
+    return json.dumps(config, indent=2) + "\n"
 
 
 def _path_to_name(path: tuple) -> str:
