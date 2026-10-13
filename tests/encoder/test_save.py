@@ -2,6 +2,7 @@
 
 import json
 import shutil
+from fnmatch import fnmatch
 from pathlib import Path
 
 import numpy as np
@@ -45,9 +46,11 @@ def test_sentence_transformers_loads_saved_encoder(case, tmp_path):
     from sentence_transformers import SentenceTransformer
 
     case.model.save_pretrained(tmp_path)
+    saved = json.loads((tmp_path / "config.json").read_text())
+    assert all(saved[k] == "float32" for k in ("torch_dtype", "dtype") if k in saved)
     tokenizer = Path(snapshot_download(case.source, allow_patterns=TOKENIZER_FILES))
     for file in tokenizer.iterdir():
-        if file.is_file():
+        if file.is_file() and any(fnmatch(file.name, p) for p in TOKENIZER_FILES):
             shutil.copy(file, tmp_path / file.name)
 
     st = SentenceTransformer(str(tmp_path), device="cpu")
