@@ -38,6 +38,7 @@ tokenizer.enable_truncation(32)
 
 
 def encode(texts):
+    """Tokenize texts into padded token ids and attention masks."""
     batch = tokenizer.encode_batch(texts)
     return jnp.array([e.ids for e in batch]), jnp.array([e.attention_mask for e in batch])
 
@@ -60,6 +61,7 @@ opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
 @eqx.filter_jit
 def train_step(model, opt_state, queries, passages):
+    """One optimisation step: compute the loss and its gradients, then update the model."""
     loss, grads = eqx.filter_value_and_grad(loss_fn)(model, queries, passages)
     updates, opt_state = optimizer.update(grads, opt_state, eqx.filter(model, eqx.is_array))
     return eqx.apply_updates(model, updates), opt_state, loss
