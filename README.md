@@ -110,7 +110,7 @@ model = Encoder.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 model.save_pretrained("my-embedder")
 ```
 
-`save_pretrained` writes the original `config.json` (with its dtype updated), any sentence-transformers configuration, and the weights as safetensors. The tokenizer isn't part of the model, so save it alongside, for example with `AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2").save_pretrained("my-embedder")`. Saving is verified by loading the result with Transformers and sentence-transformers and reproducing the reference outputs.
+`save_pretrained` writes the original `config.json` (with its dtype updated), any sentence-transformers configuration, and the weights as safetensors. The tokenizer isn't part of the model, so save it alongside, for example with `AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2").save_pretrained("my-embedder")`. Saving is verified by loading the result with Transformers and sentence-transformers and reproducing the reference outputs. For a complete example, fine-tuning all-MiniLM-L6-v2 with Optax and using the result from sentence-transformers, see [`examples/finetune_embeddings.py`](https://github.com/xquantize/eqx-zoo/blob/main/examples/finetune_embeddings.py).
 
 ## Models
 
