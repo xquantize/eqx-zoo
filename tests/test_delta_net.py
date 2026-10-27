@@ -58,3 +58,75 @@ def test_continuing_from_state_equals_one_pass():
     second, end = gated_delta_rule(q[37:], k[37:], v[37:], g[37:], beta[37:], mid)
     np.testing.assert_allclose(jnp.concatenate([first, second]), out, rtol=1e-5, atol=1e-6)
     np.testing.assert_allclose(end, final, rtol=1e-5, atol=1e-6)
+
+
+def build_layers(tmp_path):
+    """A small, fully randomised Hugging Face DeltaNet layer, and ours loaded from its weights."""
+    import equinox as eqx
+    import jax
+    from safetensors.torch import save_file
+
+    from eqx_zoo._loading import load_safetensors
+    from eqx_zoo.layers import GatedDeltaNet
+
+    config_module = pytest.importorskip("transformers.models.qwen3_5.configuration_qwen3_5")
+    config = config_module.Qwen3_5TextConfig(
+        hidden_size=64,
+        linear_num_key_heads=4,
+        linear_num_value_heads=8,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        linear_conv_kernel_dim=4,
+        rms_norm_eps=1e-6,
+        hidden_act="silu",
+        num_hidden_layers=1,
+        layer_types=["linear_attention"],
+    )
+    torch.manual_seed(0)
+    hf = reference.Qwen3_5GatedDeltaNet(config, layer_idx=0).eval()
+    with torch.no_grad():
+        for name, param in hf.named_parameters():
+            if name == "norm.weight":
+                param.copy_(1 + 0.1 * torch.randn_like(param))
+            elif name in ("A_log", "dt_bias"):
+                param.copy_(torch.randn_like(param))
+            else:
+                param.copy_(0.1 * torch.randn_like(param))
+    save_file(
+        {n: p.detach().contiguous() for n, p in hf.state_dict().items()},
+        tmp_path / "layer.safetensors",
+    )
+
+    skeleton = eqx.filter_eval_shape(
+        GatedDeltaNet,
+        64,
+        num_k_heads=4,
+        num_v_heads=8,
+        k_dim=16,
+        v_dim=16,
+        conv_kernel=4,
+        eps=1e-6,
+        key=jax.random.key(0),
+    )
+    return hf, load_safetensors(skeleton, [tmp_path / "layer.safetensors"])
+
+
+def test_layer_matches_reference(tmp_path):
+    hf, ours = build_layers(tmp_path)
+    x = np.random.default_rng(2).normal(size=(1, 50, 64)).astype(np.float32)
+    with torch.no_grad():
+        expected = hf(torch.from_numpy(x)).numpy()[0]
+    out, _ = ours(jnp.asarray(x[0]))
+    np.testing.assert_allclose(out, expected, rtol=1e-4, atol=1e-5)
+
+
+def test_layer_step_by_step_equals_full_sequence(tmp_path):
+    """Feeding tokens one at a time, carrying the state, reproduces the full-sequence output."""
+    _, ours = build_layers(tmp_path)
+    x = jnp.asarray(np.random.default_rng(3).normal(size=(20, 64)).astype(np.float32))
+    full, _ = ours(x)
+    state, steps = None, []
+    for t in range(x.shape[0]):
+        out, state = ours(x[t : t + 1], state)
+        steps.append(out)
+    np.testing.assert_allclose(jnp.concatenate(steps), full, rtol=1e-5, atol=1e-6)
