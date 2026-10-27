@@ -42,11 +42,15 @@ def capture_model(model, input_ids) -> dict[str, np.ndarray]:
         record(layer, f"layer{i}")
     record(m.norm, "final_norm")
     l0 = m.layers[0]
-    for name in ("input_layernorm", "self_attn", "post_attention_layernorm", "mlp"):
-        record(getattr(l0, name), f"layer0.{name}")
+    # Layer 0's blocks, for block-level tests. Its token mixer is attention or, in hybrid
+    # models such as Qwen3.5, Gated DeltaNet.
+    for name in ("input_layernorm", "self_attn", "linear_attn", "post_attention_layernorm", "mlp"):
+        if hasattr(l0, name):
+            record(getattr(l0, name), f"layer0.{name}")
+    attention = getattr(l0, "self_attn", None)
     for name in ("q_norm", "k_norm"):
-        if hasattr(l0.self_attn, name):
-            record(getattr(l0.self_attn, name), f"layer0.self_attn.{name}")
+        if attention is not None and hasattr(attention, name):
+            record(getattr(attention, name), f"layer0.self_attn.{name}")
 
     with torch.no_grad():
         logits = model(input_ids).logits

@@ -46,6 +46,28 @@ TINY_MODELS = {
             "mlp_only_layers": [1],
         },
     ),
+    # Qwen3.5: a Gated DeltaNet layer then a gated, partially rotary attention layer, with
+    # zero-centred norms; more DeltaNet value heads than key heads; a tied output head.
+    "tiny-qwen35": (
+        "Qwen3_5TextConfig",
+        {
+            "head_dim": 32,
+            "tie_word_embeddings": True,
+            "layer_types": ["linear_attention", "full_attention"],
+            "linear_num_key_heads": 2,
+            "linear_num_value_heads": 4,
+            "linear_key_head_dim": 16,
+            "linear_value_head_dim": 16,
+            "linear_conv_kernel_dim": 4,
+            "attn_output_gate": True,
+            "rope_parameters": {
+                "rope_type": "default",
+                "rope_theta": 10000.0,
+                "partial_rotary_factor": 0.25,
+                "mrope_section": [2, 1, 1],
+            },
+        },
+    ),
 }
 
 # Pretrained encoders: test id -> Hugging Face repository.
