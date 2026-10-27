@@ -28,7 +28,7 @@ from eqx_zoo.layers import (
     SwiGLU,
     causal_mask,
 )
-from eqx_zoo.models.causal_lm.config import Config
+from eqx_zoo.models.causal_lm.config import CHECKPOINT_LAYOUTS, Config
 
 
 class DecoderLayer(eqx.Module):
@@ -398,8 +398,14 @@ class CausalLM(eqx.Module):
         )
         ignore = ["lm_head.weight"] if config.tie_word_embeddings else []
         stacked = [f"model.layers.{i}.mlp.experts" for i in config.moe_layers]
+        prefixes, ignore_prefixes = CHECKPOINT_LAYOUTS.get(config.architecture, ({}, ()))
         return load_safetensors(
-            skeleton, sorted(path.glob("*.safetensors")), ignore=ignore, stacked=stacked
+            skeleton,
+            sorted(path.glob("*.safetensors")),
+            ignore=ignore,
+            stacked=stacked,
+            prefixes=prefixes,
+            ignore_prefixes=ignore_prefixes,
         )
 
     def save_pretrained(self, directory: str | os.PathLike[str]) -> None:
@@ -414,24 +420,22 @@ class CausalLM(eqx.Module):
         Raises:
             ValueError: If the model wasn't loaded with `from_pretrained`, so there is no
                 original `config.json` to write back.
+            NotImplementedError: For multimodal checkpoints, whose other weights aren't kept.
         """
         if self.hf_config is None:
             raise ValueError(
                 "only models loaded with from_pretrained can be saved: there is no original "
                 "config.json to write back"
             )
+        if self.config.architecture in CHECKPOINT_LAYOUTS:
+            raise NotImplementedError(
+                f"saving {self.config.architecture} checkpoints is not supported yet: only the "
+                "language model is loaded, so the saved checkpoint would lack the other weights"
+            )
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
-
-        config = json.loads(self.hf_config)
-        dtype = jnp.dtype(self.model.embed_tokens.weight.dtype).name
-        # transformers 4 reads `torch_dtype`, transformers 5 reads `dtype`.
-        keys = [k for k in ("torch_dtype", "dtype") if k in config] or ["torch_dtype"]
-        for key in keys:
-            config[key] = dtype
         (path / "config.json").write_text(
             config_with_dtype(self.hf_config, self.model.embed_tokens.weight.dtype)
         )
-
         stacked = [f"model.layers.{i}.mlp.experts" for i in self.config.moe_layers]
         save_safetensors(self, path / "model.safetensors", stacked=stacked)

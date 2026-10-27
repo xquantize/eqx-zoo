@@ -4,6 +4,7 @@
 CHECKPOINTS = {
     "qwen3-0.6b": "Qwen/Qwen3-0.6B",
     "qwen2.5-0.5b": "Qwen/Qwen2.5-0.5B",
+    "qwen3.5-0.8b": "Qwen/Qwen3.5-0.8B",  # hybrid Gated DeltaNet; language model only
     "smollm2-135m": "HuggingFaceTB/SmolLM2-135M",
     "smollm2-360m": "HuggingFaceTB/SmolLM2-360M",
     "llama-3.2-1b": "unsloth/Llama-3.2-1B",
