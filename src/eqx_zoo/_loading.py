@@ -45,12 +45,22 @@ def _layer_names(name: str, num_layers: int, stacked: Collection[str]) -> list[s
     return None
 
 
+def _checkpoint_name(name: str, prefixes: dict[str, str]) -> str:
+    """Map a module path to its checkpoint name, e.g. `model.` to `model.language_model.`."""
+    for ours, theirs in prefixes.items():
+        if name.startswith(ours):
+            return theirs + name[len(ours) :]
+    return name
+
+
 def load_safetensors[T](
     skeleton: T,
     files: Iterable[str | Path],
     *,
     ignore: Iterable[str] = (),
     stacked: Collection[str] = (),
+    prefixes: dict[str, str] | None = None,
+    ignore_prefixes: Iterable[str] = (),
 ) -> T:
     """Fill a model skeleton with tensors from safetensors files.
 
@@ -68,6 +78,11 @@ def load_safetensors[T](
         ignore: Checkpoint parameters that are deliberately unused.
         stacked: Attribute paths, e.g. `"model.layers"`, of modules stored with a
             leading layer axis.
+        prefixes: Module-path prefixes stored under a different prefix in the checkpoint,
+            e.g. `{"model.": "model.language_model."}` for a multimodal checkpoint's
+            language model.
+        ignore_prefixes: Checkpoint name prefixes that are deliberately unused, e.g. a
+            vision encoder's.
 
     Returns:
         `skeleton` with every array leaf replaced by the corresponding tensor(s).
@@ -76,6 +91,8 @@ def load_safetensors[T](
         KeyError: If the checkpoint is missing a parameter.
         ValueError: If a shape mismatches, or the checkpoint has unexpected parameters.
     """
+    prefixes = prefixes or {}
+    ignore_prefixes = tuple(ignore_prefixes)
     leaves, treedef = jax.tree_util.tree_flatten_with_path(skeleton)
 
     with ExitStack() as stack:
@@ -84,6 +101,7 @@ def load_safetensors[T](
         used: set[str] = set()
 
         def load(name: str, shape: tuple[int, ...], dtype) -> jax.Array:
+            name = _checkpoint_name(name, prefixes)
             if name not in index:
                 raise KeyError(f"checkpoint is missing parameter {name!r}")
             tensor = index[name].get_tensor(name)
@@ -101,7 +119,9 @@ def load_safetensors[T](
             else:
                 loaded.append(jnp.stack([load(n, leaf.shape[1:], leaf.dtype) for n in layer_names]))
 
-    unexpected = sorted(set(index) - used - set(ignore))
+    unexpected = sorted(
+        n for n in set(index) - used - set(ignore) if not n.startswith(ignore_prefixes)
+    )
     if unexpected:
         raise ValueError(
             f"checkpoint has {len(unexpected)} unexpected parameters: {unexpected[:5]}"
