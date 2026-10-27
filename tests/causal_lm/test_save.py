@@ -67,3 +67,30 @@ def test_refuses_model_without_original_config(tmp_path):
     model = CausalLM(config, key=jax.random.key(0), dtype=jnp.float32)
     with pytest.raises(ValueError, match="from_pretrained"):
         model.save_pretrained(tmp_path)
+
+
+def test_refuses_multimodal_checkpoint(tmp_path):
+    """Only the language model is loaded, so saving would drop the vision weights."""
+    from causal_lm.test_config import QWEN35
+
+    config = Config.from_hf(
+        QWEN35
+        | {
+            "text_config": QWEN35["text_config"]
+            | {
+                "hidden_size": 32,
+                "intermediate_size": 64,
+                "head_dim": 16,
+                "vocab_size": 64,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 1,
+                "linear_num_key_heads": 2,
+                "linear_num_value_heads": 2,
+                "linear_key_head_dim": 8,
+                "linear_value_head_dim": 8,
+            }
+        }
+    )
+    model = CausalLM(config, hf_config=json.dumps(QWEN35), key=jax.random.key(0))
+    with pytest.raises(NotImplementedError, match="not supported yet"):
+        model.save_pretrained(tmp_path)
