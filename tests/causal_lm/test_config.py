@@ -1,5 +1,7 @@
 """Tests for translating Hugging Face configs."""
 
+import dataclasses
+
 import pytest
 
 from eqx_zoo import Config
@@ -104,3 +106,67 @@ def test_expert_count_under_either_name(key):
     moe = {k: v for k, v in QWEN3_MOE.items() if k != "num_experts"}
     config = Config.from_hf(moe | {key: 128})
     assert config.num_experts == 128 and config.moe_layers == tuple(range(28))
+
+
+QWEN35_TEXT = {
+    "hidden_size": 1024,
+    "intermediate_size": 3584,
+    "num_hidden_layers": 4,
+    "num_attention_heads": 8,
+    "num_key_value_heads": 2,
+    "head_dim": 256,
+    "rms_norm_eps": 1e-6,
+    "vocab_size": 248320,
+    "hidden_act": "silu",
+    "attn_output_gate": True,
+    "tie_word_embeddings": True,
+    "layer_types": ["linear_attention"] * 3 + ["full_attention"],
+    "linear_num_key_heads": 16,
+    "linear_num_value_heads": 16,
+    "linear_key_head_dim": 128,
+    "linear_value_head_dim": 128,
+    "linear_conv_kernel_dim": 4,
+    "rope_parameters": {
+        "rope_type": "default",
+        "rope_theta": 10_000_000,
+        "partial_rotary_factor": 0.25,
+        "mrope_section": [11, 11, 10],
+    },
+}
+QWEN35 = {
+    "architectures": ["Qwen3_5ForConditionalGeneration"],
+    "tie_word_embeddings": True,
+    "text_config": QWEN35_TEXT,
+    "vision_config": {"depth": 12},
+}
+
+
+def test_qwen35_nested_config():
+    config = Config.from_hf(QWEN35)
+    assert config.layer_types == ("linear_attention",) * 3 + ("full_attention",)
+    assert (config.rotary_dim, config.attn_output_gate, config.zero_centered_norm) == (
+        64,
+        True,
+        True,
+    )
+    assert (config.linear_num_value_heads, config.linear_key_head_dim) == (16, 128)
+    assert config.rope_theta == 10_000_000 and config.tie_word_embeddings
+
+
+def test_qwen35_text_only_config():
+    flat = QWEN35_TEXT | {"architectures": ["Qwen3_5ForCausalLM"]}
+    assert Config.from_hf(flat) == dataclasses.replace(
+        Config.from_hf(QWEN35), architecture="Qwen3_5ForCausalLM"
+    )
+
+
+def test_qwen35_rejects_unknown_layer_type():
+    bad = QWEN35 | {"text_config": QWEN35_TEXT | {"layer_types": ["sliding_attention"] * 4}}
+    with pytest.raises(NotImplementedError, match="layer types"):
+        Config.from_hf(bad)
+
+
+def test_dense_configs_are_not_hybrid():
+    config = Config.from_hf(QWEN3_MOE)
+    assert config.layer_types == () and config.rotary_dim is None
+    assert not config.zero_centered_norm
