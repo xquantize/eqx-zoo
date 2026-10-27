@@ -136,6 +136,9 @@ class Attention(eqx.Module):
         head_dim: Per-head dimension.
         rope_theta: RoPE base frequency.
         rope_scaling: RoPE frequency scaling, or `None`.
+        rotary_dim: Number of leading dimensions of each head that RoPE rotates.
+        output_gate: Whether `q_proj` also produces a gate, applied to the attention output
+            through a sigmoid (Qwen3.5).
     """
 
     q_proj: eqx.nn.Linear
@@ -149,6 +152,8 @@ class Attention(eqx.Module):
     head_dim: int = eqx.field(static=True)
     rope_theta: float = eqx.field(static=True)
     rope_scaling: Llama3RopeScaling | None = eqx.field(static=True)
+    rotary_dim: int = eqx.field(static=True)
+    output_gate: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -162,6 +167,9 @@ class Attention(eqx.Module):
         eps: float = 1e-6,
         qkv_bias: bool = False,
         qk_norm: bool = False,
+        rotary_dim: int | None = None,
+        output_gate: bool = False,
+        zero_centered_norm: bool = False,
         key: PRNGKeyArray,
         dtype: DTypeLike = jnp.float32,
     ):
@@ -177,6 +185,9 @@ class Attention(eqx.Module):
             eps: Epsilon for the query/key RMSNorms.
             qkv_bias: Whether the query, key and value projections have a bias.
             qk_norm: Whether to apply RMSNorm to each query and key head.
+            rotary_dim: Leading dimensions of each head to rotate; all of them by default.
+            output_gate: Whether `q_proj` also produces a per-head output gate (Qwen3.5).
+            zero_centered_norm: Whether the query/key norms are zero-centred (Qwen3.5).
             key: PRNG key for parameter initialisation.
             dtype: Parameter dtype.
 
@@ -187,17 +198,22 @@ class Attention(eqx.Module):
             raise ValueError("num_heads must be divisible by num_kv_heads")
         q_key, k_key, v_key, o_key = jax.random.split(key, 4)
         q_dim, kv_dim = num_heads * head_dim, num_kv_heads * head_dim
-        self.q_proj = linear(dim, q_dim, key=q_key, dtype=dtype, bias=qkv_bias)
+        self.q_proj = linear(
+            dim, q_dim * (2 if output_gate else 1), key=q_key, dtype=dtype, bias=qkv_bias
+        )
         self.k_proj = linear(dim, kv_dim, key=k_key, dtype=dtype, bias=qkv_bias)
         self.v_proj = linear(dim, kv_dim, key=v_key, dtype=dtype, bias=qkv_bias)
         self.o_proj = linear(q_dim, dim, key=o_key, dtype=dtype)
-        self.q_norm = RMSNorm(head_dim, eps=eps, dtype=dtype) if qk_norm else None
-        self.k_norm = RMSNorm(head_dim, eps=eps, dtype=dtype) if qk_norm else None
+        norm = lambda: RMSNorm(head_dim, eps=eps, dtype=dtype, zero_centered=zero_centered_norm)  # noqa: E731
+        self.q_norm = norm() if qk_norm else None
+        self.k_norm = norm() if qk_norm else None
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
         self.rope_theta = rope_theta
         self.rope_scaling = rope_scaling
+        self.rotary_dim = head_dim if rotary_dim is None else rotary_dim
+        self.output_gate = output_gate
 
     def __call__(
         self,
@@ -222,14 +238,26 @@ class Attention(eqx.Module):
             the updated cache, or `None` if no cache was given.
         """
         seq = x.shape[0]
-        q = jax.vmap(self.q_proj)(x).reshape(seq, self.num_heads, self.head_dim)
+        q = jax.vmap(self.q_proj)(x)
+        if self.output_gate:
+            # Each head's projection is [query, gate], interleaved per head as in the reference.
+            q = q.reshape(seq, self.num_heads, 2 * self.head_dim)
+            q, gate = q[..., : self.head_dim], q[..., self.head_dim :]
+            gate = gate.reshape(seq, self.num_heads * self.head_dim)
+        else:
+            q = q.reshape(seq, self.num_heads, self.head_dim)
         k = jax.vmap(self.k_proj)(x).reshape(seq, self.num_kv_heads, self.head_dim)
         v = jax.vmap(self.v_proj)(x).reshape(seq, self.num_kv_heads, self.head_dim)
 
         if self.q_norm is not None and self.k_norm is not None:
             q, k = self.q_norm(q), self.k_norm(k)
-        cos, sin = rope_cos_sin(positions, self.head_dim, self.rope_theta, self.rope_scaling)
-        q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
+        r = self.rotary_dim
+        cos, sin = rope_cos_sin(positions, r, self.rope_theta, self.rope_scaling)
+        if r == self.head_dim:
+            q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
+        else:
+            q = jnp.concatenate([apply_rope(q[..., :r], cos, sin), q[..., r:]], axis=-1)
+            k = jnp.concatenate([apply_rope(k[..., :r], cos, sin), k[..., r:]], axis=-1)
 
         if cache is not None:
             if cache_index is None:
@@ -242,4 +270,6 @@ class Attention(eqx.Module):
         v = jnp.repeat(v, groups, axis=1)
 
         out = dot_product_attention(q, k, v, mask).reshape(seq, self.num_heads * self.head_dim)
+        if self.output_gate:
+            out = out * jax.nn.sigmoid(gate)
         return jax.vmap(self.o_proj)(out), cache
