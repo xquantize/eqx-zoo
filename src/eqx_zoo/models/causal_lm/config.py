@@ -27,6 +27,16 @@ _ARCHITECTURES |= {
 }
 
 
+# Checkpoints whose language model is stored under another prefix, next to weights eqx-zoo
+# doesn't use: (our prefix -> checkpoint prefix, checkpoint prefixes to ignore).
+CHECKPOINT_LAYOUTS: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
+    "Qwen3_5ForConditionalGeneration": (
+        {"model.": "model.language_model."},
+        ("model.visual.", "mtp."),  # the vision encoder, and multi-token prediction
+    ),
+}
+
+
 @dataclasses.dataclass(frozen=True)
 class Config:
     """Hyperparameters of a decoder-only language model.
