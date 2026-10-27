@@ -1,0 +1,45 @@
+name: Upstream
+
+# A weekly check against the newest release of every dependency, ignoring uv.lock, so that
+# breaking changes upstream (JAX, Transformers, ...) are caught before users run into them.
+on:
+  schedule:
+    - cron: "0 18 * * 0"  # Sundays, 18:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  newest:
+    name: newest dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Resolve the newest version of every dependency
+        run: uv lock --upgrade && uv sync
+      - name: Versions under test
+        run: >
+          uv pip list | grep -iE
+          "^(jax|jaxlib|equinox|jaxtyping|transformers|torch|sentence-transformers|safetensors|tokenizers|numpy) "
+      - name: Fast tests
+        run: uv run --frozen pytest -q
+      - name: Checkpoint tests (one causal LM, one encoder, with fresh references)
+        run: uv run --frozen pytest -q --checkpoint smollm2-135m --checkpoint all-minilm-l6-v2
+      - name: Open or update an issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          existing=$(gh issue list --label upstream --state open --json number -q '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing against the newest versions: $url"
+          else
+            gh issue create --label upstream \
+              --title "Tests fail against the newest dependency versions" \
+              --body "The weekly upstream check failed: $url. The run's \"Versions under test\" step shows what was installed."
+          fi
