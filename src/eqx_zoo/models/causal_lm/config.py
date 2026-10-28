@@ -6,10 +6,14 @@ from typing import Any
 from eqx_zoo.layers import Llama3RopeScaling
 
 # Attention features implied by each architecture rather than stated in `config.json`.
-_ARCHITECTURES: dict[str, dict[str, bool]] = {
+_ARCHITECTURES: dict[str, dict[str, Any]] = {
     "LlamaForCausalLM": {"attention_bias": False, "qk_norm": False},
     "Qwen2ForCausalLM": {"attention_bias": True, "qk_norm": False},
     "Qwen3ForCausalLM": {"attention_bias": False, "qk_norm": True},
+    # Qwen3.5: hybrid Gated DeltaNet / attention layers. The multimodal checkpoints keep the
+    # language model's settings in `text_config`.
+    "Qwen3_5ForCausalLM": {"attention_bias": False, "qk_norm": True, "hybrid": True},
+    "Qwen3_5ForConditionalGeneration": {"attention_bias": False, "qk_norm": True, "hybrid": True},
     "Qwen3MoeForCausalLM": {"attention_bias": False, "qk_norm": True},
 }
 
@@ -20,6 +24,16 @@ _ARCHITECTURES |= {
     "LlamaModel": _ARCHITECTURES["LlamaForCausalLM"],
     "Qwen2Model": _ARCHITECTURES["Qwen2ForCausalLM"],
     "Qwen3Model": _ARCHITECTURES["Qwen3ForCausalLM"],
+}
+
+
+# Checkpoints whose language model is stored under another prefix, next to weights eqx-zoo
+# doesn't use: (our prefix -> checkpoint prefix, checkpoint prefixes to ignore).
+CHECKPOINT_LAYOUTS: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
+    "Qwen3_5ForConditionalGeneration": (
+        {"model.": "model.language_model."},
+        ("model.visual.", "mtp."),  # the vision encoder, and multi-token prediction
+    ),
 }
 
 
@@ -53,6 +67,17 @@ class Config:
         moe_layers: Indices of the decoder layers that are mixture-of-experts; the others
             use a dense MLP.
         pad_token_id: Id of the padding token, whose embedding is never trained, or `None`.
+        layer_types: Each layer's token mixer, `"linear_attention"` (Gated DeltaNet) or
+            `"full_attention"`, for hybrid models; empty means attention everywhere.
+        linear_num_key_heads: Number of DeltaNet query/key heads.
+        linear_num_value_heads: Number of DeltaNet value heads.
+        linear_key_head_dim: DeltaNet query/key head dimension.
+        linear_value_head_dim: DeltaNet value head dimension.
+        linear_conv_kernel_dim: Length of DeltaNet's causal convolution.
+        rotary_dim: Leading dimensions of each attention head that RoPE rotates, or `None`
+            for all of them.
+        attn_output_gate: Whether attention has a per-head sigmoid output gate.
+        zero_centered_norm: Whether RMSNorms scale by `1 + weight`, as in Qwen3.5.
     """
 
     architecture: str
@@ -75,6 +100,15 @@ class Config:
     norm_topk_prob: bool = False
     moe_layers: tuple[int, ...] = ()
     pad_token_id: int | None = None
+    layer_types: tuple[str, ...] = ()
+    linear_num_key_heads: int = 0
+    linear_num_value_heads: int = 0
+    linear_key_head_dim: int = 0
+    linear_value_head_dim: int = 0
+    linear_conv_kernel_dim: int = 0
+    rotary_dim: int | None = None
+    attn_output_gate: bool = False
+    zero_centered_norm: bool = False
 
     @classmethod
     def from_hf(cls, config: dict[str, Any]) -> "Config":
@@ -95,6 +129,8 @@ class Config:
             supported = ", ".join(sorted(_ARCHITECTURES))
             raise ValueError(f"unsupported architecture {architecture!r}; supported: {supported}")
         features = _ARCHITECTURES[architecture]
+        # Multimodal checkpoints keep the language model's settings in `text_config`.
+        outer, config = config, config.get("text_config", config)
 
         # RoPE settings live in `rope_scaling` (transformers 4.x) or `rope_parameters` (5.x).
         rope = config.get("rope_scaling") or config.get("rope_parameters") or {}
@@ -131,6 +167,31 @@ class Config:
             )
         else:
             moe_layers = ()
+
+        head_dim = config.get("head_dim") or config["hidden_size"] // num_heads
+        factor = rope.get("partial_rotary_factor", config.get("partial_rotary_factor", 1.0))
+        rotary_dim = None if factor == 1.0 else int(head_dim * factor)
+
+        hybrid: dict[str, Any] = {}
+        if features.get("hybrid"):
+            layer_types = tuple(config["layer_types"])
+            unknown = set(layer_types) - {"linear_attention", "full_attention"}
+            if unknown:
+                raise NotImplementedError(f"layer types {sorted(unknown)} are not supported")
+            if not config.get("attn_output_gate", True):
+                raise NotImplementedError(
+                    "Qwen3.5 attention without an output gate is not supported"
+                )
+            hybrid = dict(
+                layer_types=layer_types,
+                linear_num_key_heads=config["linear_num_key_heads"],
+                linear_num_value_heads=config["linear_num_value_heads"],
+                linear_key_head_dim=config["linear_key_head_dim"],
+                linear_value_head_dim=config["linear_value_head_dim"],
+                linear_conv_kernel_dim=config["linear_conv_kernel_dim"],
+                attn_output_gate=True,
+                zero_centered_norm=True,
+            )
         return cls(
             architecture=architecture,
             vocab_size=config["vocab_size"],
@@ -139,10 +200,12 @@ class Config:
             num_hidden_layers=num_layers,
             num_attention_heads=num_heads,
             num_key_value_heads=config.get("num_key_value_heads", num_heads),
-            head_dim=config.get("head_dim") or config["hidden_size"] // num_heads,
+            head_dim=head_dim,
             rms_norm_eps=config["rms_norm_eps"],
             rope_theta=config.get("rope_theta", rope.get("rope_theta", 10_000.0)),
-            tie_word_embeddings=config.get("tie_word_embeddings", False),
+            tie_word_embeddings=config.get(
+                "tie_word_embeddings", outer.get("tie_word_embeddings", False)
+            ),
             attention_bias=config.get("attention_bias", features["attention_bias"]),
             qk_norm=features["qk_norm"],
             rope_scaling=rope_scaling,
@@ -152,4 +215,6 @@ class Config:
             norm_topk_prob=config.get("norm_topk_prob", False),
             moe_layers=moe_layers,
             pad_token_id=config.get("pad_token_id"),
+            rotary_dim=rotary_dim,
+            **hybrid,
         )

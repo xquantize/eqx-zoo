@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from support.reference import (
     bf16_hidden,
@@ -63,7 +64,10 @@ def build(name: str, directory: Path) -> dict[str, np.ndarray]:
     import transformers
 
     config_class, overrides = TINY_MODELS[name]
-    config = getattr(transformers, config_class)(**(BASE_CONFIG | overrides))
+    config_cls = getattr(transformers, config_class, None)
+    if config_cls is None:
+        pytest.skip(f"transformers {transformers.__version__} has no {config_class}")
+    config = config_cls(**(BASE_CONFIG | overrides))
     torch.manual_seed(0)
     model = transformers.AutoModelForCausalLM.from_config(config, attn_implementation="eager")
     _randomise(model)

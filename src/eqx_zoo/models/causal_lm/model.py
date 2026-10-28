@@ -18,22 +18,36 @@ from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetensors
-from eqx_zoo.layers import Attention, Cache, KVCache, RMSNorm, SparseMoE, SwiGLU, causal_mask
-from eqx_zoo.models.causal_lm.config import Config
+from eqx_zoo.layers import (
+    Attention,
+    Cache,
+    GatedDeltaNet,
+    KVCache,
+    RMSNorm,
+    SparseMoE,
+    SwiGLU,
+    causal_mask,
+)
+from eqx_zoo.models.causal_lm.config import CHECKPOINT_LAYOUTS, Config
 
 
 class DecoderLayer(eqx.Module):
-    """Pre-norm transformer block: attention then SwiGLU, each with a residual connection.
+    """Pre-norm transformer block: a token mixer, then an MLP, each with a residual connection.
+
+    The token mixer is attention, or Gated DeltaNet linear attention in hybrid models such as
+    Qwen3.5; the other is `None`, so parameter names match the checkpoint's.
 
     Attributes:
-        input_layernorm: Norm applied before attention.
-        self_attn: Grouped-query attention.
+        input_layernorm: Norm applied before the token mixer.
+        self_attn: Grouped-query attention, or `None` in a Gated DeltaNet layer.
+        linear_attn: Gated DeltaNet, or `None` in an attention layer.
         post_attention_layernorm: Norm applied before the MLP (named as in Hugging Face).
         mlp: Feed-forward block: a SwiGLU, or a sparse mixture of SwiGLU experts.
     """
 
     input_layernorm: RMSNorm
-    self_attn: Attention
+    self_attn: Attention | None
+    linear_attn: GatedDeltaNet | None
     post_attention_layernorm: RMSNorm
     mlp: SwiGLU | SparseMoE
 
@@ -42,6 +56,7 @@ class DecoderLayer(eqx.Module):
         config: Config,
         *,
         moe: bool = False,
+        linear_attention: bool = False,
         key: PRNGKeyArray,
         dtype: DTypeLike = jnp.float32,
     ):
@@ -50,26 +65,49 @@ class DecoderLayer(eqx.Module):
         Args:
             config: Model hyperparameters.
             moe: Whether the feed-forward block is a mixture of experts.
+            linear_attention: Whether the token mixer is Gated DeltaNet rather than attention.
             key: PRNG key for parameter initialisation.
             dtype: Parameter dtype.
         """
         attn_key, mlp_key = jax.random.split(key)
-        eps = config.rms_norm_eps
-        self.input_layernorm = RMSNorm(config.hidden_size, eps=eps, dtype=dtype)
-        self.self_attn = Attention(
-            config.hidden_size,
-            num_heads=config.num_attention_heads,
-            num_kv_heads=config.num_key_value_heads,
-            head_dim=config.head_dim,
-            rope_theta=config.rope_theta,
-            rope_scaling=config.rope_scaling,
-            eps=eps,
-            qkv_bias=config.attention_bias,
-            qk_norm=config.qk_norm,
-            key=attn_key,
-            dtype=dtype,
+        eps, zero_centered = config.rms_norm_eps, config.zero_centered_norm
+        self.input_layernorm = RMSNorm(
+            config.hidden_size, eps=eps, dtype=dtype, zero_centered=zero_centered
         )
-        self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=eps, dtype=dtype)
+        if linear_attention:
+            self.self_attn = None
+            self.linear_attn = GatedDeltaNet(
+                config.hidden_size,
+                num_k_heads=config.linear_num_key_heads,
+                num_v_heads=config.linear_num_value_heads,
+                k_dim=config.linear_key_head_dim,
+                v_dim=config.linear_value_head_dim,
+                conv_kernel=config.linear_conv_kernel_dim,
+                eps=eps,
+                key=attn_key,
+                dtype=dtype,
+            )
+        else:
+            self.linear_attn = None
+            self.self_attn = Attention(
+                config.hidden_size,
+                num_heads=config.num_attention_heads,
+                num_kv_heads=config.num_key_value_heads,
+                head_dim=config.head_dim,
+                rope_theta=config.rope_theta,
+                rope_scaling=config.rope_scaling,
+                eps=eps,
+                qkv_bias=config.attention_bias,
+                qk_norm=config.qk_norm,
+                rotary_dim=config.rotary_dim,
+                output_gate=config.attn_output_gate,
+                zero_centered_norm=zero_centered,
+                key=attn_key,
+                dtype=dtype,
+            )
+        self.post_attention_layernorm = RMSNorm(
+            config.hidden_size, eps=eps, dtype=dtype, zero_centered=zero_centered
+        )
         if moe:
             self.mlp = SparseMoE(
                 config.hidden_size,
@@ -90,25 +128,30 @@ class DecoderLayer(eqx.Module):
         x: Float[Array, "seq dim"],
         positions: Int[Array, " seq"],
         mask: Bool[Array, "seq keys"],
-        cache: KVCache | None = None,
+        cache=None,
         cache_index: Int[Array, ""] | None = None,
-    ) -> tuple[Float[Array, "seq dim"], KVCache | None]:
+        valid: Bool[Array, " seq"] | None = None,
+    ):
         """Apply the layer to a sequence.
 
         Args:
             x: Residual stream for each token.
             positions: Position of each token, used for the rotary embedding.
             mask: Attention mask; see `Attention`.
-            cache: This layer's key/value cache, or `None`.
-            cache_index: Cache slot for the first token; required with a cache.
+            cache: This layer's key/value cache or Gated DeltaNet state, or `None`.
+            cache_index: Cache slot for the first token; required with an attention cache.
+            valid: `True` for real tokens; Gated DeltaNet zeroes padding. Defaults to all real.
 
         Returns:
-            The updated residual stream, and the updated cache (or `None`).
+            The updated residual stream, and the updated cache or state (`None` for an
+            attention layer without a cache).
         """
-        attn_out, cache = self.self_attn(
-            self.input_layernorm(x), positions, mask, cache, cache_index
-        )
-        x = x + attn_out
+        h = self.input_layernorm(x)
+        if self.linear_attn is not None:
+            mixed, cache = self.linear_attn(h, cache, valid)
+        else:
+            mixed, cache = self.self_attn(h, positions, mask, cache, cache_index)
+        x = x + mixed
         h = self.post_attention_layernorm(x)
         # A SwiGLU acts on one token, so it is vmapped; the MoE routes the whole sequence.
         out = self.mlp(h) if isinstance(self.mlp, SparseMoE) else jax.vmap(self.mlp)(h)
@@ -142,11 +185,23 @@ class DecoderModel(eqx.Module):
         self.embed_tokens = eqx.nn.Embedding(
             config.vocab_size, config.hidden_size, key=embed_key, dtype=dtype
         )
+        layer_types = config.layer_types or ("full_attention",) * config.num_hidden_layers
         self.layers = [
-            DecoderLayer(config, moe=i in config.moe_layers, key=k, dtype=dtype)
+            DecoderLayer(
+                config,
+                moe=i in config.moe_layers,
+                linear_attention=layer_types[i] == "linear_attention",
+                key=k,
+                dtype=dtype,
+            )
             for i, k in enumerate(layer_keys)
         ]
-        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, dtype=dtype)
+        self.norm = RMSNorm(
+            config.hidden_size,
+            eps=config.rms_norm_eps,
+            dtype=dtype,
+            zero_centered=config.zero_centered_norm,
+        )
         self.pad_token_id = config.pad_token_id
 
     def __call__(
@@ -154,9 +209,10 @@ class DecoderModel(eqx.Module):
         input_ids: Int[Array, " seq"],
         positions: Int[Array, " seq"],
         mask: Bool[Array, "seq keys"],
-        caches: list[KVCache] | None = None,
+        caches: list | None = None,
         cache_index: Int[Array, ""] | None = None,
-    ) -> tuple[Float[Array, "seq dim"], list[KVCache] | None]:
+        valid: Bool[Array, " seq"] | None = None,
+    ) -> tuple[Float[Array, "seq dim"], list | None]:
         """Compute final hidden states.
 
         Args:
@@ -165,6 +221,7 @@ class DecoderModel(eqx.Module):
             mask: Attention mask; see `Attention`.
             caches: One key/value cache per layer, or `None`.
             cache_index: Cache slot for the first token; required with caches.
+            valid: True for real tokens, passed to Gated DeltaNet layers. Defaults to all real.
 
         Returns:
             Normalised hidden states for each token, and the updated caches (or `None`).
@@ -177,12 +234,12 @@ class DecoderModel(eqx.Module):
             x = jnp.where(is_pad, jax.lax.stop_gradient(x), x)
         if caches is None:
             for layer in self.layers:
-                x, _ = layer(x, positions, mask)
+                x, _ = layer(x, positions, mask, valid=valid)
             return self.norm(x), None
 
         new_caches = []
         for layer, cache in zip(self.layers, caches, strict=True):
-            x, cache = layer(x, positions, mask, cache, cache_index)
+            x, cache = layer(x, positions, mask, cache, cache_index, valid)
             new_caches.append(cache)
         return self.norm(x), new_caches
 
@@ -259,14 +316,14 @@ class CausalLM(eqx.Module):
             slots = jnp.arange(seq)
             positions = jnp.maximum(jnp.cumsum(valid) - 1, 0)
             mask = causal_mask(slots, slots, valid)
-            hidden, layer_caches = self.model(input_ids, positions, mask)
+            hidden, layer_caches = self.model(input_ids, positions, mask, valid=valid)
         else:
             slots = cache.length + jnp.arange(seq)
             positions = jnp.maximum(cache.valid.sum() + jnp.cumsum(valid) - 1, 0)
             key_valid = jax.lax.dynamic_update_slice(cache.valid, valid, (cache.length,))
             mask = causal_mask(slots, jnp.arange(key_valid.shape[0]), key_valid)
             hidden, layer_caches = self.model(
-                input_ids, positions, mask, cache.layers, cache_index=cache.length
+                input_ids, positions, mask, cache.layers, cache_index=cache.length, valid=valid
             )
 
         if self.lm_head is None:
@@ -289,9 +346,14 @@ class CausalLM(eqx.Module):
         """
         c = self.config
         dtype = self.model.embed_tokens.weight.dtype
-        empty = KVCache.empty(max_len, c.num_key_value_heads, c.head_dim, dtype)
+        layers = [
+            layer.linear_attn.init_state()
+            if layer.linear_attn is not None
+            else KVCache.empty(max_len, c.num_key_value_heads, c.head_dim, dtype)
+            for layer in self.model.layers
+        ]
         return Cache(
-            layers=[empty] * c.num_hidden_layers,
+            layers=layers,
             length=jnp.array(0, dtype=jnp.int32),
             valid=jnp.zeros(max_len, dtype=bool),
         )
@@ -336,8 +398,14 @@ class CausalLM(eqx.Module):
         )
         ignore = ["lm_head.weight"] if config.tie_word_embeddings else []
         stacked = [f"model.layers.{i}.mlp.experts" for i in config.moe_layers]
+        prefixes, ignore_prefixes = CHECKPOINT_LAYOUTS.get(config.architecture, ({}, ()))
         return load_safetensors(
-            skeleton, sorted(path.glob("*.safetensors")), ignore=ignore, stacked=stacked
+            skeleton,
+            sorted(path.glob("*.safetensors")),
+            ignore=ignore,
+            stacked=stacked,
+            prefixes=prefixes,
+            ignore_prefixes=ignore_prefixes,
         )
 
     def save_pretrained(self, directory: str | os.PathLike[str]) -> None:
@@ -352,24 +420,22 @@ class CausalLM(eqx.Module):
         Raises:
             ValueError: If the model wasn't loaded with `from_pretrained`, so there is no
                 original `config.json` to write back.
+            NotImplementedError: For multimodal checkpoints, whose other weights aren't kept.
         """
         if self.hf_config is None:
             raise ValueError(
                 "only models loaded with from_pretrained can be saved: there is no original "
                 "config.json to write back"
             )
+        if self.config.architecture in CHECKPOINT_LAYOUTS:
+            raise NotImplementedError(
+                f"saving {self.config.architecture} checkpoints is not supported yet: only the "
+                "language model is loaded, so the saved checkpoint would lack the other weights"
+            )
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
-
-        config = json.loads(self.hf_config)
-        dtype = jnp.dtype(self.model.embed_tokens.weight.dtype).name
-        # transformers 4 reads `torch_dtype`, transformers 5 reads `dtype`.
-        keys = [k for k in ("torch_dtype", "dtype") if k in config] or ["torch_dtype"]
-        for key in keys:
-            config[key] = dtype
         (path / "config.json").write_text(
             config_with_dtype(self.hf_config, self.model.embed_tokens.weight.dtype)
         )
-
         stacked = [f"model.layers.{i}.mlp.experts" for i in self.config.moe_layers]
         save_safetensors(self, path / "model.safetensors", stacked=stacked)

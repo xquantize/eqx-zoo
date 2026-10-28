@@ -4,6 +4,7 @@
 CHECKPOINTS = {
     "qwen3-0.6b": "Qwen/Qwen3-0.6B",
     "qwen2.5-0.5b": "Qwen/Qwen2.5-0.5B",
+    "qwen3.5-0.8b": "Qwen/Qwen3.5-0.8B",  # hybrid Gated DeltaNet; language model only
     "smollm2-135m": "HuggingFaceTB/SmolLM2-135M",
     "smollm2-360m": "HuggingFaceTB/SmolLM2-360M",
     "llama-3.2-1b": "unsloth/Llama-3.2-1B",
@@ -44,6 +45,28 @@ TINY_MODELS = {
             "moe_intermediate_size": 32,
             "norm_topk_prob": True,
             "mlp_only_layers": [1],
+        },
+    ),
+    # Qwen3.5: a Gated DeltaNet layer then a gated, partially rotary attention layer, with
+    # zero-centred norms; more DeltaNet value heads than key heads; a tied output head.
+    "tiny-qwen35": (
+        "Qwen3_5TextConfig",
+        {
+            "head_dim": 32,
+            "tie_word_embeddings": True,
+            "layer_types": ["linear_attention", "full_attention"],
+            "linear_num_key_heads": 2,
+            "linear_num_value_heads": 4,
+            "linear_key_head_dim": 16,
+            "linear_value_head_dim": 16,
+            "linear_conv_kernel_dim": 4,
+            "attn_output_gate": True,
+            "rope_parameters": {
+                "rope_type": "default",
+                "rope_theta": 10000.0,
+                "partial_rotary_factor": 0.25,
+                "mrope_section": [2, 1, 1],
+            },
         },
     ),
 }

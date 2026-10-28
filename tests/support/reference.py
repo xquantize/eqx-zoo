@@ -8,12 +8,17 @@ NEW_TOKENS = 20
 
 def capture(repo_id: str) -> dict[str, np.ndarray]:
     """Load a Hub checkpoint in float32 and record its reference activations."""
+    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(repo_id)
-    # Cast after loading rather than passing a dtype: the keyword is `torch_dtype` in older
-    # transformers and `dtype` in newer ones. Upcasting the stored weights is exact.
-    model = AutoModelForCausalLM.from_pretrained(repo_id, attn_implementation="eager")
+    # Load directly in float32. Loading in the stored dtype and upcasting afterwards would
+    # round any float32 weights of a mixed-precision checkpoint (such as Qwen3.5's gated-norm
+    # weights) to bf16. References are only captured with recent transformers, which call
+    # this argument `dtype`.
+    model = AutoModelForCausalLM.from_pretrained(
+        repo_id, dtype=torch.float32, attn_implementation="eager"
+    )
     model = model.float().eval()
     ids = tok(PROMPT, return_tensors="pt").input_ids
     return {**capture_model(model, ids), "bf16_logits": bf16_logits(model, ids)}
@@ -42,11 +47,15 @@ def capture_model(model, input_ids) -> dict[str, np.ndarray]:
         record(layer, f"layer{i}")
     record(m.norm, "final_norm")
     l0 = m.layers[0]
-    for name in ("input_layernorm", "self_attn", "post_attention_layernorm", "mlp"):
-        record(getattr(l0, name), f"layer0.{name}")
+    # Layer 0's blocks, for block-level tests. Its token mixer is attention or, in hybrid
+    # models such as Qwen3.5, Gated DeltaNet.
+    for name in ("input_layernorm", "self_attn", "linear_attn", "post_attention_layernorm", "mlp"):
+        if hasattr(l0, name):
+            record(getattr(l0, name), f"layer0.{name}")
+    attention = getattr(l0, "self_attn", None)
     for name in ("q_norm", "k_norm"):
-        if hasattr(l0.self_attn, name):
-            record(getattr(l0.self_attn, name), f"layer0.self_attn.{name}")
+        if attention is not None and hasattr(attention, name):
+            record(getattr(attention, name), f"layer0.self_attn.{name}")
 
     with torch.no_grad():
         logits = model(input_ids).logits
@@ -148,10 +157,13 @@ def capture_sentence_transformers(repo_id: str) -> dict[str, np.ndarray]:
 
 def capture_encoder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
     """Capture an encoder's HF activations and its sentence-transformers embeddings."""
+    import torch
     from transformers import AutoModel, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(repo_id)
-    model = AutoModel.from_pretrained(repo_id, attn_implementation="eager").float().eval()
+    model = AutoModel.from_pretrained(
+        repo_id, dtype=torch.float32, attn_implementation="eager"
+    ).eval()
     ids = tok(PROMPT, return_tensors="pt").input_ids
     return {
         **capture_encoder(model, ids),
@@ -190,10 +202,13 @@ def capture_decoder(model, input_ids) -> dict[str, np.ndarray]:
 
 def capture_embedder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
     """Capture a decoder embedder's HF activations and its sentence-transformers embeddings."""
+    import torch
     from transformers import AutoModel, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(repo_id)
-    model = AutoModel.from_pretrained(repo_id, attn_implementation="eager").float().eval()
+    model = AutoModel.from_pretrained(
+        repo_id, dtype=torch.float32, attn_implementation="eager"
+    ).eval()
     ids = tok(PROMPT, return_tensors="pt").input_ids
     return {
         **capture_decoder(model, ids),
@@ -238,7 +253,9 @@ def capture_long_decisions(repo_id: str) -> dict[str, np.ndarray]:
     ids = AutoTokenizer.from_pretrained(repo_id)(LONG_TEXT + " " + LONG_TEXT).input_ids
     assert len(ids) >= LONG_LENGTH, f"long input has only {len(ids)} tokens"
     ids = ids[:LONG_LENGTH]
-    model = AutoModelForCausalLM.from_pretrained(repo_id, attn_implementation="eager")
+    model = AutoModelForCausalLM.from_pretrained(
+        repo_id, dtype=torch.float32, attn_implementation="eager"
+    )
     model = model.float().eval()
     x = torch.tensor([ids])
     with torch.no_grad():
