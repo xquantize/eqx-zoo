@@ -71,10 +71,21 @@ jobs:
       - name: Tests for ${{ matrix.name }}
         run: uv run --locked pytest -v --checkpoint ${{ matrix.name }}
 
+  minimal:
+    name: minimal install
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv build --wheel
+      - name: Download and run models from the wheel alone, with the newest dependencies
+        run: uv run --isolated --no-project --with dist/*.whl python scripts/smoke_test.py
+
   tests-passed:
     name: tests passed
     if: always()
-    needs: [lint, fast, checkpoint]
+    needs: [lint, fast, minimal, checkpoint]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to have succeeded

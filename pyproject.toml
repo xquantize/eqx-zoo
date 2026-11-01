@@ -49,15 +49,19 @@ dev = [
 ]
 
 [tool.uv]
+# The uv version CI and local development use, matching the build backend's requirement.
+# setup-uv reads this, so CI resolves exactly as local development does.
+required-version = ">=0.12.10,<0.13"
 constraint-dependencies = [
     # Released transformers versions require huggingface-hub < 2. This only affects our
-    # lockfile; it is not part of the published package metadata.
+    # lockfile; it is not part of the published package metadata. A minimal-install CI job
+    # tests the published package with huggingface-hub 2.x.
     "huggingface-hub<2",
-    # On the PyTorch CPU index, x86-64 Linux wheels are versioned `X.Y.Z+cpu`, and plain
-    # `X.Y.Z` has no wheel for that platform. Pin the variant so that
-    # `--resolution lowest-direct` can't select an uninstallable one.
-    "torch==2.14.0+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+# CI runs on x86-64 Linux, where the PyTorch CPU index publishes wheels as `X.Y.Z+cpu`
+# only. Requiring this environment makes uv skip versions with no installable wheel there,
+# for every resolution (including `--resolution lowest-direct`), without pinning torch.
+required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
