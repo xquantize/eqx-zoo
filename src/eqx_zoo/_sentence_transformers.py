@@ -69,3 +69,76 @@ def pool(
     """Pool token states into one embedding, normalising it if requested."""
     pooled = _POOL[pooling](hidden, mask)
     return l2_normalize(pooled) if normalize else pooled
+
+
+def _pipeline_files(pooling: str, normalize: bool, dim: int) -> tuple[tuple[str, str], ...]:
+    """Sentence-transformers files describing a pooling and normalisation, for saving."""
+    modules = [
+        {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"},
+        {
+            "idx": 1,
+            "name": "1",
+            "path": "1_Pooling",
+            "type": "sentence_transformers.models.Pooling",
+        },
+    ]
+    if normalize:
+        modules.append(
+            {
+                "idx": 2,
+                "name": "2",
+                "path": "2_Normalize",
+                "type": "sentence_transformers.models.Normalize",
+            }
+        )
+    mode = {ours: theirs for theirs, ours in _MODES.items()}[pooling]
+    config = {"word_embedding_dimension": dim} | {
+        f"pooling_mode_{m}": m == mode
+        for m in ("cls_token", "mean_tokens", "max_tokens", "mean_sqrt_len_tokens", "lasttoken")
+    }
+    return (
+        ("modules.json", json.dumps(modules, indent=2) + "\n"),
+        ("1_Pooling/config.json", json.dumps(config, indent=2) + "\n"),
+    )
+
+
+def load_pipeline(
+    path: Path, pooling: str | None, normalize: bool | None, dim: int
+) -> tuple[str | None, bool, tuple[tuple[str, str], ...]]:
+    """The pooling and normalisation to use, and the sentence-transformers files to keep.
+
+    A checkpoint's own sentence-transformers pipeline takes precedence; `pooling` and
+    `normalize` may restate it but not contradict it. For a checkpoint without one, they
+    supply it, and matching sentence-transformers files are generated so that a saved copy
+    loads with the same pooling.
+
+    Args:
+        path: Checkpoint directory.
+        pooling: `"cls"`, `"mean"` or `"last_token"`, or `None` if not specified.
+        normalize: Whether to scale embeddings to unit length, or `None` if not specified.
+        dim: Hidden size, recorded in a generated pooling configuration.
+
+    Returns:
+        The pooling (or `None` if there is none), whether to normalise, and the files.
+
+    Raises:
+        ValueError: If `pooling` is unknown, or the arguments contradict the checkpoint's
+            pipeline.
+    """
+    if pooling is not None and pooling not in _POOL:
+        raise ValueError(f"pooling must be one of {sorted(_POOL)}, not {pooling!r}")
+    files = read_files(path)
+    if (path / "modules.json").exists():
+        stored_pooling, stored_normalize = read_pipeline(path)
+        if pooling is not None and pooling != stored_pooling:
+            raise ValueError(
+                f"pooling={pooling!r} contradicts the checkpoint's pooling {stored_pooling!r}"
+            )
+        if normalize is not None and normalize != stored_normalize:
+            raise ValueError(
+                f"normalize={normalize} contradicts the checkpoint's normalize={stored_normalize}"
+            )
+        return stored_pooling, stored_normalize, files
+    if pooling is None:
+        return None, bool(normalize), files
+    return pooling, bool(normalize), files + _pipeline_files(pooling, bool(normalize), dim)
