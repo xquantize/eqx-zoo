@@ -21,17 +21,25 @@ from eqx_zoo import Encoder
 LIMIT = 1e-14  # relative to the largest value; see the module docstring
 
 
+def enable_x64():
+    """Enable float64 within a block: `jax.enable_x64` in recent JAX, experimental before."""
+    if hasattr(jax, "enable_x64"):
+        return jax.enable_x64(True)
+    return jax.experimental.enable_x64()
+
+
 @pytest.mark.parametrize("name", list(TINY_ENCODERS))
 def test_float64_matches_transformers(name, tmp_path):
     build_encoder(name, tmp_path)
     ids = np.array([5, 17, 42, 8, 99, 3, 61, 12])
-    hf = AutoModel.from_pretrained(
-        tmp_path, dtype=torch.float64, attn_implementation="eager"
-    ).eval()
+    # Loaded in float32 and then converted, which is exact for the tiny models (saved entirely
+    # in float32) and works on every supported transformers version: older ones call the
+    # loading argument `torch_dtype`, newer ones `dtype`.
+    hf = AutoModel.from_pretrained(tmp_path, attn_implementation="eager").double().eval()
     with torch.no_grad():
         expected = hf(torch.from_numpy(ids)[None]).last_hidden_state[0].numpy()
 
-    with jax.enable_x64(True):
+    with enable_x64():
         hidden = np.asarray(Encoder.from_pretrained(tmp_path, dtype=jnp.float64)(jnp.asarray(ids)))
     assert hidden.dtype == np.float64
     error = np.abs(hidden - expected).max() / np.abs(expected).max()
