@@ -62,3 +62,16 @@ def test_rejects_unknown_pooling(tiny):
 def test_without_pooling_embed_still_explains(tiny):
     with pytest.raises(ValueError, match="pooling"):
         Encoder.from_pretrained(tiny).embed(jnp.asarray(IDS))
+
+
+def test_decoder_embedder_supplied_pooling(tmp_path):
+    from support.tiny import build_embedder
+
+    from eqx_zoo import DecoderEmbedder
+
+    build_embedder("tiny-qwen3-embedder", tmp_path / "tiny")
+    model = DecoderEmbedder.from_pretrained(tmp_path / "tiny", pooling="last_token", normalize=True)
+    model.save_pretrained(tmp_path / "saved")
+    assert read_pipeline(tmp_path / "saved") == ("last_token", True)
+    with pytest.raises(ValueError, match="contradicts"):
+        DecoderEmbedder.from_pretrained(tmp_path / "saved", pooling="cls")
