@@ -41,8 +41,11 @@ def test_transformers_loads_saved_encoder(case, tmp_path):
 
 def test_sentence_transformers_loads_saved_encoder(case, tmp_path):
     """sentence-transformers loads what we save, and computes the reference embeddings."""
-    if "st_embeddings" not in case.reference:
-        pytest.skip("no sentence-transformers reference for this model")
+    # Checkpoints without a pipeline are compared with Transformers' pooled embeddings: the
+    # saved copy's generated sentence-transformers files must reproduce the supplied pooling.
+    expected = case.reference.get("st_embeddings", case.reference.get("pooled_embeddings"))
+    if expected is None:
+        pytest.skip("no reference embeddings for this model")
     from sentence_transformers import SentenceTransformer
 
     case.model.save_pretrained(tmp_path)
@@ -54,6 +57,4 @@ def test_sentence_transformers_loads_saved_encoder(case, tmp_path):
             shutil.copy(file, tmp_path / file.name)
 
     st = SentenceTransformer(str(tmp_path), device="cpu")
-    np.testing.assert_allclose(
-        st.encode(SENTENCES), case.reference["st_embeddings"], rtol=1e-4, atol=1e-5
-    )
+    np.testing.assert_allclose(st.encode(SENTENCES), expected, rtol=1e-4, atol=1e-5)

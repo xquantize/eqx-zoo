@@ -4,6 +4,11 @@ import numpy as np
 
 PROMPT = "The capital of France is"
 NEW_TOKENS = 20
+# A (title, abstract) pair: the second segment has token type 1 in BERT-style tokenizers.
+PAIR = (
+    "Lighthouse keepers and their logbooks",
+    "Each night the keeper recorded the wind, the waves and every passing ship.",
+)
 
 
 def capture(repo_id: str) -> dict[str, np.ndarray]:
@@ -155,8 +160,13 @@ def capture_sentence_transformers(repo_id: str) -> dict[str, np.ndarray]:
     }
 
 
-def capture_encoder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
-    """Capture an encoder's HF activations and its sentence-transformers embeddings."""
+def capture_encoder_checkpoint(repo_id: str, pooling: str | None = None) -> dict[str, np.ndarray]:
+    """Capture an encoder's HF activations, a sentence pair's, and reference embeddings.
+
+    Embeddings come from sentence-transformers, or, for checkpoints without a pipeline
+    (`pooling` given), from Transformers pooled as their model cards say: sentence-transformers
+    would silently fall back to mean pooling for them.
+    """
     import torch
     from transformers import AutoModel, AutoTokenizer
 
@@ -165,10 +175,54 @@ def capture_encoder_checkpoint(repo_id: str) -> dict[str, np.ndarray]:
         repo_id, dtype=torch.float32, attn_implementation="eager"
     ).eval()
     ids = tok(PROMPT, return_tensors="pt").input_ids
+    reference = {**capture_encoder(model, ids), **capture_pair(model, tok)}
+    if pooling is None:
+        reference |= capture_sentence_transformers(repo_id)
+    else:
+        reference |= capture_pooled(model, tok, pooling)
+    # Last: bf16_hidden converts the model to bfloat16 in place.
+    reference["bf16_hidden"] = bf16_hidden(model, ids)
+    return reference
+
+
+def capture_pair(model, tok) -> dict[str, np.ndarray]:
+    """Hidden states for a sentence pair, so the second segment's token type is exercised."""
+    import torch
+
+    batch = tok(*PAIR, return_tensors="pt")
+    types = batch.get("token_type_ids", torch.zeros_like(batch["input_ids"]))
+    with torch.no_grad():
+        hidden = model(input_ids=batch["input_ids"], token_type_ids=types).last_hidden_state
     return {
-        **capture_encoder(model, ids),
-        "bf16_hidden": bf16_hidden(model, ids),
-        **capture_sentence_transformers(repo_id),
+        "pair_input_ids": batch["input_ids"][0].numpy(),
+        "pair_token_type_ids": types[0].numpy(),
+        "pair_hidden": hidden[0].numpy(),
+    }
+
+
+def capture_pooled(model, tok, pooling: str) -> dict[str, np.ndarray]:
+    """Reference embeddings of `SENTENCES` from Transformers, pooled at [CLS] or by the mean."""
+    import torch
+
+    batch = tok(SENTENCES, padding=True, return_tensors="pt")
+    types = batch.get("token_type_ids", torch.zeros_like(batch["input_ids"]))
+    mask = batch["attention_mask"]
+    with torch.no_grad():
+        hidden = model(
+            input_ids=batch["input_ids"], attention_mask=mask, token_type_ids=types
+        ).last_hidden_state
+    if pooling == "cls":
+        pooled = hidden[:, 0]
+    elif pooling == "mean":
+        weights = mask[..., None].float()
+        pooled = (hidden * weights).sum(1) / weights.sum(1)
+    else:
+        raise ValueError(f"no reference pooling for {pooling!r}")
+    return {
+        "pooled_input_ids": batch["input_ids"].numpy(),
+        "pooled_attention_mask": mask.numpy(),
+        "pooled_token_type_ids": types.numpy(),
+        "pooled_embeddings": pooled.numpy(),
     }
 
 

@@ -77,6 +77,18 @@ ENCODER_CHECKPOINTS = {
     "bge-small-en-v1.5": "BAAI/bge-small-en-v1.5",  # [CLS] pooling
     "multilingual-e5-small": "intfloat/multilingual-e5-small",  # BERT, multilingual vocab
     "multilingual-e5-base": "intfloat/multilingual-e5-base",  # XLM-RoBERTa, mean pooling
+    # MedCPT: no sentence-transformers pipeline; [CLS] pooling, per the model card. The
+    # article encoder takes (title, abstract) pairs, so token types 0 and 1 both occur.
+    "medcpt-query-encoder": "ncbi/MedCPT-Query-Encoder",
+    "medcpt-article-encoder": "ncbi/MedCPT-Article-Encoder",
+}
+
+# Pooling for checkpoints without a sentence-transformers pipeline, from their model cards.
+# Their reference embeddings come from Transformers, since sentence-transformers would
+# silently fall back to mean pooling for them.
+ENCODER_POOLING = {
+    "medcpt-query-encoder": "cls",
+    "medcpt-article-encoder": "cls",
 }
 
 # Tiny randomly initialised encoders: test id -> (transformers config class, config overrides).

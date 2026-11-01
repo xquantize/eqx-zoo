@@ -439,7 +439,10 @@ class Encoder(eqx.Module):
             ValueError: If the checkpoint has no sentence-transformers pooling configuration.
         """
         if self.pooling is None:
-            raise ValueError("this checkpoint has no sentence-transformers pooling configuration")
+            raise ValueError(
+                "this checkpoint has no sentence-transformers pooling configuration; pass "
+                "pooling= (and normalize=) to from_pretrained, as its model card specifies"
+            )
         hidden = self(input_ids, attention_mask, token_type_ids)
         mask = (
             jnp.ones(input_ids.shape[0], dtype=bool)
