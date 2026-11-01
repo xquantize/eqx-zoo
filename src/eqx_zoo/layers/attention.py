@@ -101,6 +101,8 @@ def dot_product_attention(
     k: Float[Array, "k heads head_dim"],
     v: Float[Array, "k heads head_dim"],
     mask: Bool[Array, "q k"],
+    *,
+    softmax_dtype: DTypeLike = jnp.float32,
 ) -> Float[Array, "q heads head_dim"]:
     """Scaled dot-product attention with a boolean mask, the softmax computed in float32.
 
@@ -109,13 +111,15 @@ def dot_product_attention(
         k: Keys, with the same number of heads as `q`.
         v: Values, with the same number of heads as `q`.
         mask: `True` where a query may attend to a key.
+        softmax_dtype: Dtype of the softmax. Decoders' references compute it in float32
+            whatever the input dtype; encoders' use the input dtype, at least float32.
 
     Returns:
         The attention output for each query.
     """
     scores = jnp.einsum("qhd,khd->hqk", q, k) * q.shape[-1] ** -0.5
     scores = jnp.where(mask[None], scores, jnp.finfo(scores.dtype).min)
-    probs = jax.nn.softmax(scores.astype(jnp.float32), axis=-1).astype(v.dtype)
+    probs = jax.nn.softmax(scores.astype(softmax_dtype), axis=-1).astype(v.dtype)
     return jnp.einsum("hqk,khd->qhd", probs, v)
 
 
