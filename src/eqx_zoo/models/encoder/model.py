@@ -20,7 +20,7 @@ from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetensors
-from eqx_zoo._sentence_transformers import pool, read_files, read_pipeline, write_files
+from eqx_zoo._sentence_transformers import load_pipeline, pool, write_files
 from eqx_zoo.layers import LayerNorm as _LayerNorm
 from eqx_zoo.layers import dot_product_attention
 from eqx_zoo.layers._common import at_least_float32, linear
@@ -339,12 +339,14 @@ class Encoder(eqx.Module):
         embeddings: Token, position and token-type embeddings.
         encoder: The encoder layers.
         config: Model hyperparameters.
-        pooling: How `embed` pools token states (`"mean"` or `"cls"`), or `None` if the
-            checkpoint has no sentence-transformers configuration. Defaults to `None`.
+        pooling: How `embed` pools token states (`"mean"`, `"cls"` or `"last_token"`), from
+            the checkpoint's sentence-transformers pipeline or the `pooling` argument of
+            `from_pretrained`; `None` if neither specifies it.
         normalize: Whether `embed` scales embeddings to unit length.
         hf_config: The checkpoint's `config.json` text, kept for `save_pretrained`, or `None`.
-        st_files: The checkpoint's sentence-transformers configuration files, kept for
-            `save_pretrained`.
+        st_files: Sentence-transformers configuration files written by `save_pretrained`: the
+            checkpoint's own, or generated from `from_pretrained`'s `pooling` argument for a
+            checkpoint without them.
     """
 
     embeddings: Embeddings
@@ -437,7 +439,10 @@ class Encoder(eqx.Module):
             ValueError: If the checkpoint has no sentence-transformers pooling configuration.
         """
         if self.pooling is None:
-            raise ValueError("this checkpoint has no sentence-transformers pooling configuration")
+            raise ValueError(
+                "this checkpoint has no sentence-transformers pooling configuration; pass "
+                "pooling= (and normalize=) to from_pretrained, as its model card specifies"
+            )
         hidden = self(input_ids, attention_mask, token_type_ids)
         mask = (
             jnp.ones(input_ids.shape[0], dtype=bool)
@@ -453,6 +458,8 @@ class Encoder(eqx.Module):
         *,
         dtype: DTypeLike = jnp.float32,
         revision: str | None = None,
+        pooling: str | None = None,
+        normalize: bool | None = None,
     ) -> "Encoder":
         """Load a pretrained encoder from the Hugging Face Hub or a local directory.
 
@@ -461,6 +468,10 @@ class Encoder(eqx.Module):
                 local directory containing `config.json` and safetensors files.
             dtype: Dtype to cast the parameters to.
             revision: Optional git revision of a Hub repository; ignored for directories.
+            pooling: How to pool token states (`"cls"`, `"mean"` or `"last_token"`) for a
+                checkpoint without a sentence-transformers pipeline; for one with a pipeline,
+                it may only restate the checkpoint's pooling.
+            normalize: Whether to scale embeddings to unit length, likewise.
 
         Returns:
             The encoder with pretrained weights.
@@ -484,14 +495,14 @@ class Encoder(eqx.Module):
             )
         hf_config = (path / "config.json").read_text()
         config = EncoderConfig.from_hf(json.loads(hf_config))
-        pooling, normalize = read_pipeline(path)
+        pooling, normalize, st_files = load_pipeline(path, pooling, normalize, config.hidden_size)
         skeleton = eqx.filter_eval_shape(
             cls,
             config,
             pooling=pooling,
             normalize=normalize,
             hf_config=hf_config,
-            st_files=read_files(path),
+            st_files=st_files,
             key=jax.random.key(0),
             dtype=dtype,
         )

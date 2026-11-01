@@ -18,7 +18,7 @@ from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
 from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetensors
-from eqx_zoo._sentence_transformers import pool, read_files, read_pipeline, write_files
+from eqx_zoo._sentence_transformers import load_pipeline, pool, write_files
 from eqx_zoo.layers import causal_mask
 from eqx_zoo.models.causal_lm.config import Config
 from eqx_zoo.models.causal_lm.model import DecoderModel
@@ -34,12 +34,14 @@ class DecoderEmbedder(eqx.Module):
     Attributes:
         model: The decoder stack.
         config: Model hyperparameters.
-        pooling: How `embed` pools token states (`"last_token"`, `"mean"` or `"cls"`), or
-            `None` if the checkpoint has no sentence-transformers configuration.
+        pooling: How `embed` pools token states (`"mean"`, `"cls"` or `"last_token"`), from
+            the checkpoint's sentence-transformers pipeline or the `pooling` argument of
+            `from_pretrained`; `None` if neither specifies it.
         normalize: Whether `embed` scales embeddings to unit length.
         hf_config: The checkpoint's `config.json` text, kept for `save_pretrained`, or `None`.
-        st_files: The checkpoint's sentence-transformers configuration files, kept for
-            `save_pretrained`.
+        st_files: Sentence-transformers configuration files written by `save_pretrained`: the
+            checkpoint's own, or generated from `from_pretrained`'s `pooling` argument for a
+            checkpoint without them.
     """
 
     model: DecoderModel
@@ -134,6 +136,8 @@ class DecoderEmbedder(eqx.Module):
         *,
         dtype: DTypeLike = jnp.float32,
         revision: str | None = None,
+        pooling: str | None = None,
+        normalize: bool | None = None,
     ) -> "DecoderEmbedder":
         """Load a decoder embedding model from the Hugging Face Hub or a local directory.
 
@@ -144,6 +148,10 @@ class DecoderEmbedder(eqx.Module):
             repo_id: Hub repository, e.g. `"Qwen/Qwen3-Embedding-0.6B"`, or a local directory.
             dtype: Dtype to cast the parameters to.
             revision: Optional git revision of a Hub repository; ignored for directories.
+            pooling: How to pool token states (`"cls"`, `"mean"` or `"last_token"`) for a
+                checkpoint without a sentence-transformers pipeline; for one with a pipeline,
+                it may only restate the checkpoint's pooling.
+            normalize: Whether to scale embeddings to unit length, likewise.
 
         Returns:
             The embedder with pretrained weights.
@@ -167,14 +175,14 @@ class DecoderEmbedder(eqx.Module):
             )
         hf_config = (path / "config.json").read_text()
         config = Config.from_hf(json.loads(hf_config))
-        pooling, normalize = read_pipeline(path)
+        pooling, normalize, st_files = load_pipeline(path, pooling, normalize, config.hidden_size)
         skeleton = eqx.filter_eval_shape(
             cls,
             config,
             pooling=pooling,
             normalize=normalize,
             hf_config=hf_config,
-            st_files=read_files(path),
+            st_files=st_files,
             key=jax.random.key(0),
             dtype=dtype,
         )

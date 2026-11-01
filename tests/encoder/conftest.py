@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from support.reference import capture_encoder_checkpoint
-from support.registry import ENCODER_CHECKPOINTS, TINY_ENCODERS
+from support.registry import ENCODER_CHECKPOINTS, ENCODER_POOLING, TINY_ENCODERS
 from support.tiny import build_encoder
 
 from eqx_zoo import Encoder
@@ -36,11 +36,15 @@ def case(request, cached_reference, tmp_path_factory) -> Case:
         source = str(directory)
     else:
         source = ENCODER_CHECKPOINTS[name]
-        reference = cached_reference(name, lambda: capture_encoder_checkpoint(source))
-    return Case(name, source, Encoder.from_pretrained(source, dtype=jnp.float32), reference)
+        pooling = ENCODER_POOLING.get(name)
+        reference = cached_reference(name, lambda: capture_encoder_checkpoint(source, pooling))
+    model = Encoder.from_pretrained(source, dtype=jnp.float32, pooling=ENCODER_POOLING.get(name))
+    return Case(name, source, model, reference)
 
 
 @pytest.fixture(scope="package")
 def bf16_model(case) -> Encoder:
     """The same encoder as `case`, loaded in bfloat16 as a user would."""
-    return Encoder.from_pretrained(case.source, dtype=jnp.bfloat16)
+    return Encoder.from_pretrained(
+        case.source, dtype=jnp.bfloat16, pooling=ENCODER_POOLING.get(case.name)
+    )
