@@ -5,6 +5,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, DTypeLike, Float
 
+from eqx_zoo.layers._common import at_least_float32
+
 
 class RMSNorm(eqx.Module):
     """Root-mean-square layer normalisation over the last axis.
@@ -98,8 +100,9 @@ class LayerNorm(eqx.Module):
             The normalised, scaled and shifted input, in the input dtype.
         """
         dtype = x.dtype
-        x = x.astype(jnp.float32)
+        compute = at_least_float32(dtype)
+        x = x.astype(compute)
         mean = jnp.mean(x, axis=-1, keepdims=True)
         var = jnp.mean((x - mean) ** 2, axis=-1, keepdims=True)
         x = (x - mean) * jax.lax.rsqrt(var + self.eps)
-        return (x * self.weight.astype(jnp.float32) + self.bias.astype(jnp.float32)).astype(dtype)
+        return (x * self.weight.astype(compute) + self.bias.astype(compute)).astype(dtype)

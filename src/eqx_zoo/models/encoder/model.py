@@ -23,7 +23,7 @@ from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetenso
 from eqx_zoo._sentence_transformers import pool, read_files, read_pipeline, write_files
 from eqx_zoo.layers import LayerNorm as _LayerNorm
 from eqx_zoo.layers import dot_product_attention
-from eqx_zoo.layers._common import linear
+from eqx_zoo.layers._common import at_least_float32, linear
 from eqx_zoo.models.encoder.config import EncoderConfig
 
 # Checkpoint tensors that are deliberately unused: the stored position-id buffer (positions
@@ -150,7 +150,9 @@ class SelfAttention(eqx.Module):
         q = jax.vmap(self.query)(x).reshape(heads)
         k = jax.vmap(self.key)(x).reshape(heads)
         v = jax.vmap(self.value)(x).reshape(heads)
-        return dot_product_attention(q, k, v, mask).reshape(seq, dim)
+        return dot_product_attention(
+            q, k, v, mask, softmax_dtype=at_least_float32(q.dtype)
+        ).reshape(seq, dim)
 
 
 class ResidualOutput(eqx.Module):
