@@ -100,6 +100,12 @@ query, passage = jax.vmap(model.embed)(ids, mask)
 print(query @ passage)  # cosine similarity
 ```
 
+Some checkpoints have no sentence-transformers pipeline, so their model card states the pooling instead. Pass it to `from_pretrained`, and `save_pretrained` will write matching sentence-transformers files, so the saved model loads with the same pooling there too:
+
+```python
+model = Encoder.from_pretrained("ncbi/MedCPT-Query-Encoder", pooling="cls")
+```
+
 ## Saving models
 
 Models loaded with `from_pretrained` can be saved back in Hugging Face format, for example after fine-tuning, so that Transformers, sentence-transformers or the Hub can use them:
@@ -132,7 +138,7 @@ Mixture-of-experts models, including [Qwen3-30B-A3B](https://huggingface.co/Qwen
 
 | Architecture | Verified checkpoints |
 |---|---|
-| `BertModel` | [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5), [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) |
+| `BertModel` | [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5), [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small), [MedCPT query](https://huggingface.co/ncbi/MedCPT-Query-Encoder) and [article](https://huggingface.co/ncbi/MedCPT-Article-Encoder) encoders (with `pooling="cls"`) |
 | `XLMRobertaModel` | [multilingual-e5-base](https://huggingface.co/intfloat/multilingual-e5-base) |
 
 `RobertaModel` shares the XLM-RoBERTa implementation and is verified on tiny random models.
