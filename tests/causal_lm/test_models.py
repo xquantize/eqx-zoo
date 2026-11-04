@@ -30,3 +30,12 @@ def test_logits(case):
     logits = eqx.filter_jit(lambda m, ids: m(ids)[0])(case.model, jnp.asarray(ref["input_ids"]))
     np.testing.assert_allclose(logits, ref["logits"], rtol=1e-3, atol=1e-2)
     np.testing.assert_array_equal(logits.argmax(-1), ref["logits"].argmax(-1))
+
+
+def test_last_only_logits(case):
+    """Logits for the last position only match the last row of the full logits."""
+    ids = jnp.asarray(case.reference["input_ids"])
+    full, _ = case.model(ids)
+    last, _ = case.model(ids, last_only=True)
+    assert last.shape == (1, full.shape[-1])
+    np.testing.assert_allclose(last, full[-1:], rtol=1e-6, atol=1e-6)
