@@ -42,7 +42,8 @@ def main() -> None:
 
     load_s = timed(load)
     ids = jnp.arange(args.prompt_len) % model.config.vocab_size
-    forward = eqx.filter_jit(lambda m, x: m(x)[0])
+    # As generation does: logits for the last prompt position only.
+    forward = eqx.filter_jit(lambda m, x: m(x, last_only=True)[0])
 
     prefill_first = timed(lambda: forward(model, ids))
     prefill_warm = timed(lambda: forward(model, ids), repeats=3)

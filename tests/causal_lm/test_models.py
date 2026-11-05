@@ -30,3 +30,19 @@ def test_logits(case):
     logits = eqx.filter_jit(lambda m, ids: m(ids)[0])(case.model, jnp.asarray(ref["input_ids"]))
     np.testing.assert_allclose(logits, ref["logits"], rtol=1e-3, atol=1e-2)
     np.testing.assert_array_equal(logits.argmax(-1), ref["logits"].argmax(-1))
+
+
+def test_last_only_logits(case):
+    """Logits for the last position only match the last row of the full logits.
+
+    Not bit-identical: multiplying one row takes a different path through the matrix library
+    than multiplying every row. Measured on CI (x86): at most 3.2e-5 on logits reaching the
+    tens (Llama 3.2 1B), under 2e-6 of the largest logit. Computing the wrong row is off by
+    order one.
+    """
+    ids = jnp.asarray(case.reference["input_ids"])
+    full, _ = case.model(ids)
+    last, _ = case.model(ids, last_only=True)
+    assert last.shape == (1, full.shape[-1])
+    error = float(jnp.abs(last - full[-1:]).max() / jnp.abs(full[-1:]).max())
+    assert error <= 1e-5, f"last-only logits differ by {error:.1e} of the largest logit"

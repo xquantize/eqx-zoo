@@ -31,7 +31,7 @@ def _generate(model, prompt_ids, prompt_mask, max_new_tokens, temperature, key):
         return jax.random.categorical(k, logits / temperature).astype(jnp.int32)
 
     cache = model.init_cache(prompt_ids.shape[0] + max_new_tokens)
-    logits, cache = model(prompt_ids, cache, attention_mask=prompt_mask)
+    logits, cache = model(prompt_ids, cache, attention_mask=prompt_mask, last_only=True)
     first = pick(logits[-1], keys[0])
 
     def step(carry, k):

@@ -292,6 +292,7 @@ class CausalLM(eqx.Module):
         input_ids: Int[Array, " seq"],
         cache: Cache | None = None,
         attention_mask: Bool[Array, " seq"] | Int[Array, " seq"] | None = None,
+        last_only: bool = False,
     ) -> tuple[Float[Array, "seq vocab"], Cache | None]:
         """Compute next-token logits, optionally continuing from a cache.
 
@@ -301,6 +302,9 @@ class CausalLM(eqx.Module):
             attention_mask: `1` or `True` for real tokens and `0` or `False` for padding, as
                 produced by tokenizers. Padding is ignored by attention and does not advance
                 positions; the logits at padding tokens are unspecified. Defaults to all real.
+            last_only: Compute logits only for the last position, as generation needs for a
+                prompt. Saves the output head's cost for every other position, which for large
+                vocabularies is a substantial share of the forward pass.
 
         Returns:
             Unnormalised next-token logits for each position, and the updated cache (or
@@ -325,6 +329,9 @@ class CausalLM(eqx.Module):
             hidden, layer_caches = self.model(
                 input_ids, positions, mask, cache.layers, cache_index=cache.length, valid=valid
             )
+
+        if last_only:
+            hidden = hidden[-1:]
 
         if self.lm_head is None:
             logits = hidden @ self.model.embed_tokens.weight.T
