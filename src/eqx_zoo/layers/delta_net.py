@@ -361,6 +361,9 @@ class GatedDeltaNet(eqx.Module):
         if repeat > 1:
             q, k = jnp.repeat(q, repeat, axis=1), jnp.repeat(k, repeat, axis=1)
 
-        out, recurrent = gated_delta_rule(q, k, v, g, beta, state.recurrent)
+        # Chunked for prompts, recurrent for single tokens (generation), as in the reference;
+        # a single token would otherwise be padded to a whole chunk.
+        rule = gated_delta_rule if seq == 1 else chunked_gated_delta_rule
+        out, recurrent = rule(q, k, v, g, beta, state.recurrent)
         out = self.norm(out, z).reshape(seq, self.num_v_heads * self.v_dim)
         return jax.vmap(self.out_proj)(out), DeltaNetState(conv=conv_state, recurrent=recurrent)
