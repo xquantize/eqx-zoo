@@ -12,7 +12,13 @@ from eqx_zoo.layers.attention import (
     causal_mask,
     dot_product_attention,
 )
-from eqx_zoo.layers.delta_net import DeltaNetState, GatedDeltaNet, RMSNormGated, gated_delta_rule
+from eqx_zoo.layers.delta_net import (
+    DeltaNetState,
+    GatedDeltaNet,
+    RMSNormGated,
+    chunked_gated_delta_rule,
+    gated_delta_rule,
+)
 from eqx_zoo.layers.mlp import SwiGLU
 from eqx_zoo.layers.moe import SparseMoE
 from eqx_zoo.layers.norm import LayerNorm, RMSNorm
@@ -41,4 +47,5 @@ __all__ = [
     "GatedDeltaNet",
     "RMSNormGated",
     "gated_delta_rule",
+    "chunked_gated_delta_rule",
 ]

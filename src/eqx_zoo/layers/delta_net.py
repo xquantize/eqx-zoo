@@ -58,6 +58,87 @@ def gated_delta_rule(
     return out.astype(dtype), state
 
 
+def chunked_gated_delta_rule(
+    q: Float[Array, "seq heads k_dim"],
+    k: Float[Array, "seq heads k_dim"],
+    v: Float[Array, "seq heads v_dim"],
+    g: Float[Array, "seq heads"],
+    beta: Float[Array, "seq heads"],
+    state: Float[Array, "heads k_dim v_dim"] | None = None,
+    chunk_size: int = 64,
+) -> tuple[Float[Array, "seq heads v_dim"], Float[Array, "heads k_dim v_dim"]]:
+    """Apply the gated delta rule chunk by chunk: as `gated_delta_rule`, faster for long inputs.
+
+    As in the reference's chunked form: within each chunk, the delta-rule updates are
+    combined by solving a unit lower-triangular system and applied with matrix
+    multiplications; a scan then carries each head's memory across chunks. The sequence is
+    padded to a whole number of chunks with tokens that neither decay nor write the memory.
+
+    Args:
+        q: Queries.
+        k: Keys.
+        v: Values.
+        g: Log decay of each head's memory at each token; at most zero.
+        beta: Write strength of each token, between zero and one.
+        state: Each head's memory before the first token, or `None` for zeros.
+        chunk_size: Tokens per chunk.
+
+    Returns:
+        The output for each token, in the queries' dtype, and the final memory in float32.
+    """
+    dtype = q.dtype
+    q, k, v, g, beta = (x.astype(jnp.float32) for x in (q, k, v, g, beta))
+    q = _l2norm(q) * q.shape[-1] ** -0.5
+    k = _l2norm(k)
+    seq, heads, k_dim = k.shape
+    v_dim = v.shape[-1]
+    if state is None:
+        state = jnp.zeros((heads, k_dim, v_dim), dtype=jnp.float32)
+    pad = -seq % chunk_size
+    num_chunks = (seq + pad) // chunk_size
+
+    def chunks(x):
+        """(seq, heads, ...) -> (chunks, heads, chunk, ...), padded with zeros."""
+        x = jnp.pad(x, [(0, pad)] + [(0, 0)] * (x.ndim - 1))
+        return jnp.moveaxis(x.reshape(num_chunks, chunk_size, *x.shape[1:]), 2, 1)
+
+    q, k, v, g, beta = map(chunks, (q, k, v, g, beta))
+    k_beta, v_beta = k * beta[..., None], v * beta[..., None]
+    cum = jnp.cumsum(g, axis=-1)  # log decay from the start of the chunk to each position
+    lower = jnp.tril(jnp.ones((chunk_size, chunk_size), dtype=bool))
+    # Decay from position j to position i of a chunk, for j <= i; zero above the diagonal.
+    pairwise = jnp.exp(jnp.where(lower, cum[..., :, None] - cum[..., None, :], -jnp.inf))
+
+    # Within a chunk, each token's correction depends on the earlier tokens' corrections;
+    # solving this unit lower-triangular system applies them all at once.
+    system = jnp.eye(chunk_size) + jnp.tril(jnp.einsum("nhid,nhjd->nhij", k_beta, k) * pairwise, -1)
+
+    def solve(b):
+        return jax.scipy.linalg.solve_triangular(system, b, lower=True, unit_diagonal=True)
+
+    new_values = solve(v_beta)
+    k_cumdecay = solve(k_beta * jnp.exp(cum)[..., None])
+    intra = jnp.einsum("nhid,nhjd->nhij", q, k) * pairwise
+    q_decayed = q * jnp.exp(cum)[..., None]
+    k_decayed = k * jnp.exp(cum[..., -1:] - cum)[..., None]
+    chunk_decay = jnp.exp(cum[..., -1])
+
+    def step(s, inputs):
+        new_v, k_cd, q_d, k_d, attn, decay = inputs
+        corrected = new_v - jnp.einsum("hcd,hde->hce", k_cd, s)
+        out = jnp.einsum("hcd,hde->hce", q_d, s) + jnp.einsum("hij,hje->hie", attn, corrected)
+        s = s * decay[:, None, None] + jnp.einsum("hcd,hce->hde", k_d, corrected)
+        return s, out
+
+    state, out = jax.lax.scan(
+        step,
+        state.astype(jnp.float32),
+        (new_values, k_cumdecay, q_decayed, k_decayed, intra, chunk_decay),
+    )
+    out = jnp.moveaxis(out, 1, 2).reshape(num_chunks * chunk_size, heads, v_dim)[:seq]
+    return out.astype(dtype), state
+
+
 class DeltaNetState(eqx.Module):
     """What a DeltaNet layer carries between calls when generating.
 
@@ -280,6 +361,9 @@ class GatedDeltaNet(eqx.Module):
         if repeat > 1:
             q, k = jnp.repeat(q, repeat, axis=1), jnp.repeat(k, repeat, axis=1)
 
-        out, recurrent = gated_delta_rule(q, k, v, g, beta, state.recurrent)
+        # Chunked for prompts, recurrent for single tokens (generation), as in the reference;
+        # a single token would otherwise be padded to a whole chunk.
+        rule = gated_delta_rule if seq == 1 else chunked_gated_delta_rule
+        out, recurrent = rule(q, k, v, g, beta, state.recurrent)
         out = self.norm(out, z).reshape(seq, self.num_v_heads * self.v_dim)
         return jax.vmap(self.out_proj)(out), DeltaNetState(conv=conv_state, recurrent=recurrent)
