@@ -130,3 +130,38 @@ def test_layer_step_by_step_equals_full_sequence(tmp_path):
         out, state = ours(x[t : t + 1], state)
         steps.append(out)
     np.testing.assert_allclose(jnp.concatenate(steps), full, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("seq", [1, 63, 64, 65, 200])
+@pytest.mark.parametrize("with_state", [False, True])
+def test_chunked_matches_recurrent_and_reference(seq, with_state):
+    from eqx_zoo.layers import chunked_gated_delta_rule
+
+    rng = np.random.default_rng(seq)
+    q, k = (rng.normal(size=(seq, HEADS, K_DIM)).astype(np.float32) for _ in range(2))
+    v = rng.normal(size=(seq, HEADS, V_DIM)).astype(np.float32)
+    g = -np.logaddexp(0, 2 * rng.normal(size=(seq, HEADS))).astype(
+        np.float32
+    )  # up to strong decays
+    beta = (1 / (1 + np.exp(-rng.normal(size=(seq, HEADS))))).astype(np.float32)
+    state = rng.normal(size=(HEADS, K_DIM, V_DIM)).astype(np.float32) if with_state else None
+    jstate = None if state is None else jnp.asarray(state)
+
+    ours, ours_state = chunked_gated_delta_rule(*map(jnp.asarray, (q, k, v, g, beta)), jstate)
+    recurrent, recurrent_state = gated_delta_rule(*map(jnp.asarray, (q, k, v, g, beta)), jstate)
+    np.testing.assert_allclose(ours, recurrent, rtol=1e-4, atol=1e-5)
+    np.testing.assert_allclose(ours_state, recurrent_state, rtol=1e-4, atol=1e-5)
+
+    t = lambda a: None if a is None else torch.from_numpy(a)[None]  # noqa: E731
+    expected, expected_state = reference.torch_chunk_gated_delta_rule(
+        t(q),
+        t(k),
+        t(v),
+        g=t(g),
+        beta=t(beta),
+        initial_state=t(state),
+        output_final_state=True,
+        use_qk_l2norm_in_kernel=True,
+    )
+    np.testing.assert_allclose(ours, expected[0].numpy(), rtol=1e-4, atol=1e-5)
+    np.testing.assert_allclose(ours_state, expected_state[0].numpy(), rtol=1e-4, atol=1e-5)
