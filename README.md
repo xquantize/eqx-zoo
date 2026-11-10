@@ -118,6 +118,8 @@ model.save_pretrained("my-embedder")
 
 `save_pretrained` writes the original `config.json` (with its dtype updated), any sentence-transformers configuration, and the weights as safetensors. The tokenizer isn't part of the model, so save it alongside, for example with `AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2").save_pretrained("my-embedder")`. Saving is verified by loading the result with Transformers and sentence-transformers and reproducing the reference outputs. For a complete example, fine-tuning all-MiniLM-L6-v2 with Optax and using the result from sentence-transformers, see [`examples/finetune_embeddings.py`](https://github.com/xquantize/eqx-zoo/blob/main/examples/finetune_embeddings.py).
 
+Multimodal checkpoints such as Qwen3.5's are saved as their text-only language model (for example `Qwen3_5ForCausalLM`), since eqx-zoo loads only the language model.
+
 ## Models
 
 Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained` or `Encoder.from_pretrained`, from the Hugging Face Hub or a local directory. These checkpoints are verified by the test suite, and collected on the Hugging Face Hub in [Verified in eqx-zoo](https://huggingface.co/collections/xquantize/verified-in-eqx-zoo-6ac2d731fd1ef3e109541bf7).
