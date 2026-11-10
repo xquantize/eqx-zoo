@@ -1,5 +1,7 @@
 """Sparse mixture-of-experts feed-forward block."""
 
+import copy
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,6 +9,40 @@ from jaxtyping import Array, DTypeLike, Float, PRNGKeyArray
 
 from eqx_zoo.layers._common import linear
 from eqx_zoo.layers.mlp import SwiGLU
+
+
+@jax.custom_batching.custom_vmap
+def batchable_ragged_dot(lhs, rhs, group_sizes):
+    """`jax.lax.ragged_dot` that can be vmapped, for inference: not differentiable in reverse mode.
+
+    Vmapped over rows that each have their own tokens and group sizes, it sorts the whole
+    batch's tokens by group and computes them with one grouped matrix multiplication.
+    """
+    return jax.lax.ragged_dot(lhs, rhs, group_sizes)
+
+
+@batchable_ragged_dot.def_vmap
+def _batchable_ragged_dot_vmap(axis_size, in_batched, lhs, rhs, group_sizes):
+    lhs_batched, rhs_batched, sizes_batched = in_batched
+    if not lhs_batched:
+        lhs = jnp.broadcast_to(lhs, (axis_size, *lhs.shape))
+    if not sizes_batched:
+        group_sizes = jnp.broadcast_to(group_sizes, (axis_size, *group_sizes.shape))
+    if rhs_batched:
+        # Different weights for each row: compute the rows one after another.
+        rows = jax.lax.map(lambda a: jax.lax.ragged_dot(*a), (lhs, rhs, group_sizes))
+        return rows, True
+    batch, tokens, dim = lhs.shape
+    groups = group_sizes.shape[-1]
+    # Each row's tokens are sorted by group; give every token its group, then sort the whole
+    # batch by group, so that one grouped multiplication covers every row.
+    ids = jax.vmap(lambda s: jnp.repeat(jnp.arange(groups), s, total_repeat_length=tokens))(
+        group_sizes
+    )
+    order = jnp.argsort(ids.reshape(-1), stable=True)
+    sorted_out = jax.lax.ragged_dot(lhs.reshape(-1, dim)[order], rhs, group_sizes.sum(0))
+    out = jnp.zeros_like(sorted_out).at[order].set(sorted_out)
+    return out.reshape(batch, tokens, -1), True
 
 
 class SparseMoE(eqx.Module):
@@ -22,12 +58,15 @@ class SparseMoE(eqx.Module):
         experts: All experts as a single `SwiGLU` whose weights carry a leading expert axis.
         num_experts_per_tok: Number of experts each token is routed to.
         norm_topk_prob: Whether the selected experts' weights are renormalised to sum to one.
+        batched_inference: Whether grouped matrix multiplications use a batching rule, so
+            that the block can be vmapped; for inference only. See `for_batched_inference`.
     """
 
     gate: eqx.nn.Linear
     experts: SwiGLU
     num_experts_per_tok: int = eqx.field(static=True)
     norm_topk_prob: bool = eqx.field(static=True)
+    batched_inference: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -62,6 +101,18 @@ class SparseMoE(eqx.Module):
         self.experts = eqx.filter_vmap(make_expert)(jax.random.split(experts_key, num_experts))
         self.num_experts_per_tok = num_experts_per_tok
         self.norm_topk_prob = norm_topk_prob
+        self.batched_inference = False
+
+    def for_batched_inference(self) -> "SparseMoE":
+        """This block, with grouped matrix multiplications that can be vmapped.
+
+        `jax.lax.ragged_dot` can't be vmapped; with this, a batch's tokens are computed
+        together instead. The result is not differentiable in reverse mode, so it's for
+        inference, such as batched generation.
+        """
+        new = copy.copy(self)
+        object.__setattr__(new, "batched_inference", True)  # a static field, set on a copy
+        return new
 
     def __call__(self, x: Float[Array, "seq dim"]) -> Float[Array, "seq dim"]:
         """Apply the block to a sequence.
@@ -92,10 +143,11 @@ class SparseMoE(eqx.Module):
         # Each expert's weights are stored as (out, in); `ragged_dot` wants (in, out).
         w = self.experts
         rows = x[tokens]
-        gate = jax.lax.ragged_dot(rows, w.gate_proj.weight.transpose(0, 2, 1), group_sizes)
-        up = jax.lax.ragged_dot(rows, w.up_proj.weight.transpose(0, 2, 1), group_sizes)
+        matmul = batchable_ragged_dot if self.batched_inference else jax.lax.ragged_dot
+        gate = matmul(rows, w.gate_proj.weight.transpose(0, 2, 1), group_sizes)
+        up = matmul(rows, w.up_proj.weight.transpose(0, 2, 1), group_sizes)
         hidden = jax.nn.silu(gate) * up
-        out = jax.lax.ragged_dot(hidden, w.down_proj.weight.transpose(0, 2, 1), group_sizes)
+        out = matmul(hidden, w.down_proj.weight.transpose(0, 2, 1), group_sizes)
 
         # Weight each assignment and sum it back into its token.
         out = out * weights.reshape(-1)[order][:, None]

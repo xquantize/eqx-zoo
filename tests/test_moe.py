@@ -53,3 +53,30 @@ def test_rejects_invalid_top_k():
             norm_topk_prob=True,
             key=jax.random.key(0),
         )
+
+
+def test_batchable_ragged_dot_matches_each_row():
+    import jax
+
+    from eqx_zoo.layers.moe import batchable_ragged_dot
+
+    rng = np.random.default_rng(0)
+    batch, tokens, dim, out, groups = 3, 12, 8, 16, 3
+    lhs = jnp.asarray(rng.normal(size=(batch, tokens, dim)), dtype=jnp.float32)
+    rhs = jnp.asarray(rng.normal(size=(groups, dim, out)), dtype=jnp.float32)
+    # Per-row group sizes, including empty groups (a row whose tokens all go to one group).
+    sizes = jnp.array([[5, 4, 3], [0, 12, 0], [7, 0, 5]], dtype=jnp.int32)
+    rows = jnp.stack([jax.lax.ragged_dot(lhs[i], rhs, sizes[i]) for i in range(batch)])
+
+    batched = jax.vmap(batchable_ragged_dot, in_axes=(0, None, 0))
+    np.testing.assert_allclose(batched(lhs, rhs, sizes), rows, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(jax.jit(batched)(lhs, rhs, sizes), rows, rtol=1e-6, atol=1e-6)
+
+    shared = jax.vmap(batchable_ragged_dot, in_axes=(0, None, None))(lhs, rhs, sizes[0])
+    expected = jnp.stack([jax.lax.ragged_dot(lhs[i], rhs, sizes[0]) for i in range(batch)])
+    np.testing.assert_allclose(shared, expected, rtol=1e-6, atol=1e-6)
+
+    # Outside vmap, it is plain ragged_dot.
+    np.testing.assert_array_equal(
+        batchable_ragged_dot(lhs[0], rhs, sizes[0]), jax.lax.ragged_dot(lhs[0], rhs, sizes[0])
+    )
