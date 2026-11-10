@@ -9,6 +9,40 @@ from eqx_zoo.layers._common import linear
 from eqx_zoo.layers.mlp import SwiGLU
 
 
+@jax.custom_batching.custom_vmap
+def batchable_ragged_dot(lhs, rhs, group_sizes):
+    """`jax.lax.ragged_dot` that can be vmapped, for inference: not differentiable in reverse mode.
+
+    Vmapped over rows that each have their own tokens and group sizes, it sorts the whole
+    batch's tokens by group and computes them with one grouped matrix multiplication.
+    """
+    return jax.lax.ragged_dot(lhs, rhs, group_sizes)
+
+
+@batchable_ragged_dot.def_vmap
+def _batchable_ragged_dot_vmap(axis_size, in_batched, lhs, rhs, group_sizes):
+    lhs_batched, rhs_batched, sizes_batched = in_batched
+    if not lhs_batched:
+        lhs = jnp.broadcast_to(lhs, (axis_size, *lhs.shape))
+    if not sizes_batched:
+        group_sizes = jnp.broadcast_to(group_sizes, (axis_size, *group_sizes.shape))
+    if rhs_batched:
+        # Different weights for each row: compute the rows one after another.
+        rows = jax.lax.map(lambda a: jax.lax.ragged_dot(*a), (lhs, rhs, group_sizes))
+        return rows, True
+    batch, tokens, dim = lhs.shape
+    groups = group_sizes.shape[-1]
+    # Each row's tokens are sorted by group; give every token its group, then sort the whole
+    # batch by group, so that one grouped multiplication covers every row.
+    ids = jax.vmap(lambda s: jnp.repeat(jnp.arange(groups), s, total_repeat_length=tokens))(
+        group_sizes
+    )
+    order = jnp.argsort(ids.reshape(-1), stable=True)
+    sorted_out = jax.lax.ragged_dot(lhs.reshape(-1, dim)[order], rhs, group_sizes.sum(0))
+    out = jnp.zeros_like(sorted_out).at[order].set(sorted_out)
+    return out.reshape(batch, tokens, -1), True
+
+
 class SparseMoE(eqx.Module):
     """Mixture of SwiGLU experts, with each token routed to its top-k experts.
 
