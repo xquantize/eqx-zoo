@@ -21,6 +21,16 @@ def _contains_moe(model) -> bool:
     return any(is_moe(node) for node in jax.tree.leaves(model, is_leaf=is_moe))
 
 
+def _for_batched_inference(model):
+    """The model, with every mixture-of-experts block able to be vmapped."""
+    is_moe = lambda x: isinstance(x, SparseMoE)  # noqa: E731
+
+    def blocks(m):
+        return [x for x in jax.tree.leaves(m, is_leaf=is_moe) if is_moe(x)]
+
+    return eqx.tree_at(blocks, model, [block.for_batched_inference() for block in blocks(model)])
+
+
 def _generate(model, prompt_ids, prompt_mask, max_new_tokens, temperature, key):
     """Generate for a single prompt; `prompt_mask` marks real tokens, or is `None`."""
     keys = jax.random.split(key, max_new_tokens)
@@ -94,9 +104,6 @@ def generate_batch(
     decoding each row is identical to calling `generate` on that prompt alone. Prompts
     must be left-padded, so that each prompt's last token is a real token.
 
-    Models with mixture-of-experts layers generate their prompts one after another rather
-    than in parallel; results are identical, but batching gives no speed-up for them yet.
-
     Args:
         model: A zoo language model providing `__call__(ids, cache, attention_mask)` and
             `init_cache`.
@@ -120,11 +127,12 @@ def generate_batch(
     _check_args(max_new_tokens, temperature, key)
     keys = jax.random.split(jax.random.key(0) if key is None else key, prompt_ids.shape[0])
 
+    if _contains_moe(model):
+        # `jax.lax.ragged_dot` can't be vmapped, so mixture-of-experts layers switch to grouped
+        # matrix multiplications with a batching rule: the batch's tokens are computed together.
+        model = _for_batched_inference(model)
+
     def generate_one(ids, mask, k):
         return _generate(model, ids, mask, max_new_tokens, temperature, k)
 
-    if _contains_moe(model):
-        # `jax.lax.ragged_dot`, used by mixture-of-experts layers, cannot yet be vmapped,
-        # so these prompts are generated one after another instead of together (#23).
-        return jax.lax.map(lambda args: generate_one(*args), (prompt_ids, prompt_mask, keys))
     return jax.vmap(generate_one)(prompt_ids, prompt_mask, keys)
