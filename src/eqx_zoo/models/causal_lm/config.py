@@ -37,6 +37,12 @@ CHECKPOINT_LAYOUTS: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
 }
 
 
+# The text-only architecture that a multimodal checkpoint's language model is saved as.
+TEXT_ONLY_ARCHITECTURES: dict[str, str] = {
+    "Qwen3_5ForConditionalGeneration": "Qwen3_5ForCausalLM",
+}
+
+
 @dataclasses.dataclass(frozen=True)
 class Config:
     """Hyperparameters of a decoder-only language model.

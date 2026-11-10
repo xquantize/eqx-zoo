@@ -28,7 +28,7 @@ from eqx_zoo.layers import (
     SwiGLU,
     causal_mask,
 )
-from eqx_zoo.models.causal_lm.config import CHECKPOINT_LAYOUTS, Config
+from eqx_zoo.models.causal_lm.config import CHECKPOINT_LAYOUTS, TEXT_ONLY_ARCHITECTURES, Config
 
 
 class DecoderLayer(eqx.Module):
@@ -418,31 +418,44 @@ class CausalLM(eqx.Module):
     def save_pretrained(self, directory: str | os.PathLike[str]) -> None:
         """Save in Hugging Face format, as `config.json` and `model.safetensors`.
 
-        Writes back the `config.json` the model was loaded with, with its dtype set to that
-        of the saved parameters, so Hugging Face Transformers loads it like the original.
+         Writes back the `config.json` the model was loaded with, with its dtype set to that
+         of the saved parameters, so Hugging Face Transformers loads it like the original.
+
+        A multimodal checkpoint, such as Qwen3.5's, is saved as its text-only language model
+        (for example `Qwen3_5ForCausalLM`), since only the language model is loaded.
 
         Args:
-            directory: Destination directory; created if needed.
+             directory: Destination directory; created if needed.
 
         Raises:
-            ValueError: If the model wasn't loaded with `from_pretrained`, so there is no
-                original `config.json` to write back.
-            NotImplementedError: For multimodal checkpoints, whose other weights aren't kept.
+             ValueError: If the model wasn't loaded with `from_pretrained`, so there is no
+                 original `config.json` to write back.
         """
         if self.hf_config is None:
             raise ValueError(
                 "only models loaded with from_pretrained can be saved: there is no original "
                 "config.json to write back"
             )
-        if self.config.architecture in CHECKPOINT_LAYOUTS:
-            raise NotImplementedError(
-                f"saving {self.config.architecture} checkpoints is not supported yet: only the "
-                "language model is loaded, so the saved checkpoint would lack the other weights"
+        hf_config = self.hf_config
+        text_only = TEXT_ONLY_ARCHITECTURES.get(self.config.architecture)
+        if text_only is not None:
+            # Only the language model is loaded, so save it as a text-only checkpoint: its
+            # weights are already named as that architecture expects.
+            outer = json.loads(hf_config)
+            text = outer["text_config"]
+            hf_config = json.dumps(
+                text
+                | {
+                    "architectures": [text_only],
+                    "tie_word_embeddings": text.get(
+                        "tie_word_embeddings", outer.get("tie_word_embeddings", False)
+                    ),
+                }
             )
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
         (path / "config.json").write_text(
-            config_with_dtype(self.hf_config, self.model.embed_tokens.weight.dtype)
+            config_with_dtype(hf_config, self.model.embed_tokens.weight.dtype)
         )
         stacked = [f"model.layers.{i}.mlp.experts" for i in self.config.moe_layers]
         save_safetensors(self, path / "model.safetensors", stacked=stacked)
