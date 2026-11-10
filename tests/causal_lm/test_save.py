@@ -100,3 +100,16 @@ def test_saves_multimodal_as_text_only(tmp_path):
     leaves = lambda m: jax.tree.leaves(eqx.filter(m, eqx.is_array))  # noqa: E731
     for a, b in zip(leaves(model), leaves(reloaded), strict=True):
         np.testing.assert_array_equal(a, b)
+
+
+def test_transformers_loads_saved_multimodal_language_model(case, tmp_path):
+    """Transformers loads a saved multimodal language model and reproduces the reference."""
+    from eqx_zoo.models.causal_lm.config import TEXT_ONLY_ARCHITECTURES
+
+    if case.model.config.architecture not in TEXT_ONLY_ARCHITECTURES:
+        pytest.skip("not a multimodal checkpoint")
+    case.model.save_pretrained(tmp_path)
+    hf = AutoModelForCausalLM.from_pretrained(tmp_path, attn_implementation="eager").eval()
+    with torch.no_grad():
+        logits = hf(torch.from_numpy(case.reference["input_ids"])[None]).logits[0].numpy()
+    np.testing.assert_allclose(logits, case.reference["logits"], rtol=1e-4, atol=1e-4)
