@@ -8,6 +8,8 @@ from eqx_zoo.layers import Llama3RopeScaling
 # Attention features implied by each architecture rather than stated in `config.json`.
 _ARCHITECTURES: dict[str, dict[str, Any]] = {
     "LlamaForCausalLM": {"attention_bias": False, "qk_norm": False},
+    # Mistral: Llama-style attention, plus a sliding window in some checkpoints (see below).
+    "MistralForCausalLM": {"attention_bias": False, "qk_norm": False, "sliding_window": True},
     "Qwen2ForCausalLM": {"attention_bias": True, "qk_norm": False},
     "Qwen3ForCausalLM": {"attention_bias": False, "qk_norm": True},
     # Qwen3.5: hybrid Gated DeltaNet / attention layers. The multimodal checkpoints keep the
@@ -35,7 +37,6 @@ CHECKPOINT_LAYOUTS: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
         ("model.visual.", "mtp."),  # the vision encoder, and multi-token prediction
     ),
 }
-
 
 # The text-only architecture that a multimodal checkpoint's language model is saved as.
 TEXT_ONLY_ARCHITECTURES: dict[str, str] = {
@@ -156,6 +157,21 @@ class Config:
             raise NotImplementedError("MLP bias is not supported yet")
         if config.get("use_sliding_window", False):
             raise NotImplementedError("sliding-window attention is not supported yet")
+        if config.get("mlp_bias", False):
+            raise NotImplementedError("MLP bias is not supported yet")
+        if config.get("use_sliding_window", False):
+            raise NotImplementedError("sliding-window attention is not supported yet")
+        if features.get("sliding_window"):
+            # Mistral's window only matters if it's shorter than the context: Mistral-7B v0.3
+            # has none, and some small checkpoints have one longer than their whole context.
+            window, context = config.get("sliding_window"), config["max_position_embeddings"]
+            if window is not None and window < context:
+                raise NotImplementedError(
+                    f"sliding-window attention (a {window}-token window in a {context}-token "
+                    "context) is not supported yet"
+                )
+        if config.get("hidden_act", "silu") != "silu":
+            raise NotImplementedError(f"activation {config['hidden_act']!r} is not supported")
         if config.get("hidden_act", "silu") != "silu":
             raise NotImplementedError(f"activation {config['hidden_act']!r} is not supported")
 
