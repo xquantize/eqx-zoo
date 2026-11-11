@@ -170,3 +170,36 @@ def test_dense_configs_are_not_hybrid():
     config = Config.from_hf(QWEN3_MOE)
     assert config.layer_types == () and config.rotary_dim is None
     assert not config.zero_centered_norm
+
+
+MISTRAL_V03 = {
+    "architectures": ["MistralForCausalLM"],
+    "hidden_size": 4096,
+    "intermediate_size": 14336,
+    "num_hidden_layers": 32,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 8,
+    "max_position_embeddings": 32768,
+    "rms_norm_eps": 1e-5,
+    "rope_theta": 1_000_000.0,
+    "sliding_window": None,
+    "tie_word_embeddings": False,
+    "vocab_size": 32768,
+}
+
+
+def test_mistral():
+    config = Config.from_hf(MISTRAL_V03)
+    assert (config.head_dim, config.attention_bias, config.qk_norm) == (128, False, False)
+    assert config.rope_theta == 1_000_000.0
+
+
+def test_mistral_window_longer_than_context_is_accepted():
+    """nano-mistral: a 4,096-token window in a 2,048-token context can never take effect."""
+    Config.from_hf(MISTRAL_V03 | {"sliding_window": 4096, "max_position_embeddings": 2048})
+
+
+def test_mistral_rejects_an_effective_sliding_window():
+    """Mistral-7B v0.1: a 4,096-token window in a 32,768-token context."""
+    with pytest.raises(NotImplementedError, match="sliding-window"):
+        Config.from_hf(MISTRAL_V03 | {"sliding_window": 4096})

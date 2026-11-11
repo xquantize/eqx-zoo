@@ -9,6 +9,7 @@ CHECKPOINTS = {
     "smollm2-360m": "HuggingFaceTB/SmolLM2-360M",
     "llama-3.2-1b": "unsloth/Llama-3.2-1B",
     "minimind-3-moe": "jingyaogong/minimind-3-moe",
+    "nano-mistral": "crumb/nano-mistral",  # Mistral; its sliding window exceeds its context
 }
 
 # Tiny randomly initialised models: test id -> (transformers config class, config overrides).
@@ -69,6 +70,8 @@ TINY_MODELS = {
             },
         },
     ),
+    # Mistral: Llama-style attention without biases; untied output head; no sliding window.
+    "tiny-mistral": ("MistralConfig", {"sliding_window": None, "tie_word_embeddings": False}),
 }
 
 # Pretrained encoders: test id -> Hugging Face repository.

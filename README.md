@@ -129,6 +129,7 @@ Any checkpoint with a supported architecture loads with `CausalLM.from_pretraine
 | Architecture | Verified checkpoints |
 |---|---|
 | `LlamaForCausalLM` | [SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M), [Llama 3.2 1B](https://huggingface.co/meta-llama/Llama-3.2-1B), [SmolLM2-360M](https://huggingface.co/HuggingFaceTB/SmolLM2-360M) |
+| `MistralForCausalLM` | [nano-mistral](https://huggingface.co/crumb/nano-mistral) (Mistral-7B v0.3 shares the architecture; checkpoints whose sliding window is shorter than their context, such as v0.1, are not supported yet) |
 | `Qwen3ForCausalLM` | [Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) |
 | `Qwen2ForCausalLM` | [Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) |
 | `Qwen3_5ForConditionalGeneration` | [Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B) (language model; hybrid Gated DeltaNet and attention) |
