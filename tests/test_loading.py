@@ -1,6 +1,6 @@
 """Tests for loading checkpoints."""
 
-import shutil
+import json
 from pathlib import Path
 
 import equinox as eqx
@@ -14,7 +14,8 @@ from support.registry import CHECKPOINTS, TINY_MODELS
 from support.tiny import build
 
 from eqx_zoo import CausalLM
-from eqx_zoo._loading import load_safetensors, save_safetensors
+from eqx_zoo._loading import load_safetensors
+from eqx_zoo.models.gpt2 import GPT2
 
 
 @pytest.mark.checkpoint("smollm2-135m")
@@ -90,23 +91,22 @@ def test_stacked_extra_layer(tmp_path):
 
 
 @pytest.mark.parametrize("name", list(TINY_MODELS))
-def test_save_safetensors_round_trip(name, tmp_path):
+def test_save_round_trip(name, tmp_path):
+    """Saved weights have Transformers' own tensor names, and reload bit-identically."""
     source, target = tmp_path / "source", tmp_path / "saved"
     build(name, source)
-    model = CausalLM.from_pretrained(source)
-
-    target.mkdir()
-    stacked = [f"model.layers.{i}.mlp.experts" for i in model.config.moe_layers]
-    save_safetensors(model, target / "model.safetensors", stacked=stacked)
-    shutil.copy(source / "config.json", target / "config.json")
+    architecture = json.loads((source / "config.json").read_text())["architectures"][0]
+    cls = GPT2 if architecture == "GPT2LMHeadModel" else CausalLM
+    model = cls.from_pretrained(source)
+    model.save_pretrained(target)
 
     with (
-        safe_open(source / "model.safetensors", "np") as ours,
-        safe_open(target / "model.safetensors", "np") as theirs,
+        safe_open(source / "model.safetensors", "np") as theirs,
+        safe_open(target / "model.safetensors", "np") as ours,
     ):
-        assert set(theirs.keys()) == set(ours.keys())
+        assert set(ours.keys()) == set(theirs.keys())
 
-    reloaded = CausalLM.from_pretrained(target)
+    reloaded = cls.from_pretrained(target)
     leaves = lambda m: jax.tree.leaves(eqx.filter(m, eqx.is_array))  # noqa: E731
     for a, b in zip(leaves(model), leaves(reloaded), strict=True):
         np.testing.assert_array_equal(a, b)
