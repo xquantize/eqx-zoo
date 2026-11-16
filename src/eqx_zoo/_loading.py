@@ -129,7 +129,13 @@ def load_safetensors[T](
     return jax.tree_util.tree_unflatten(treedef, loaded)
 
 
-def save_safetensors(model, file: str | Path, *, stacked: Collection[str] = ()) -> None:
+def save_safetensors(
+    model,
+    file: str | Path,
+    *,
+    stacked: Collection[str] = (),
+    prefixes: dict[str, str] | None = None,
+) -> None:
     """Write a model's arrays to a safetensors file, named as `load_safetensors` reads them.
 
     The inverse of `load_safetensors`: each array leaf is saved under its attribute path,
@@ -141,6 +147,7 @@ def save_safetensors(model, file: str | Path, *, stacked: Collection[str] = ()) 
         file: Destination file.
         stacked: Attribute paths of modules stored with a leading layer axis, as for
             `load_safetensors`.
+        prefixes: Module-path prefixes to store under another prefix, as for `load_safetensors`.
     """
     from safetensors.flax import save_file
 
@@ -149,7 +156,8 @@ def save_safetensors(model, file: str | Path, *, stacked: Collection[str] = ()) 
         name = _path_to_name(path)
         layer_names = _layer_names(name, leaf.shape[0], stacked) if leaf.ndim else None
         if layer_names is None:
-            tensors[name] = leaf
+            tensors[_checkpoint_name(name, prefixes or {})] = leaf
         else:
-            tensors.update(zip(layer_names, leaf, strict=True))
+            names = [_checkpoint_name(n, prefixes or {}) for n in layer_names]
+            tensors.update(zip(names, leaf, strict=True))
     save_file(tensors, str(file), metadata={"format": "pt"})

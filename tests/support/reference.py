@@ -46,12 +46,15 @@ def capture_model(model, input_ids) -> dict[str, np.ndarray]:
 
         handles.append(module.register_forward_hook(hook))
 
-    m = model.model
-    record(m.embed_tokens, "embed")
-    for i, layer in enumerate(m.layers):
+    # Llama-style models keep their decoder in `model.model`; GPT-2 in `model.transformer`.
+    gpt2 = hasattr(model, "transformer")
+    m = model.transformer if gpt2 else model.model
+    layers = m.h if gpt2 else m.layers
+    record(m.wte if gpt2 else m.embed_tokens, "embed")
+    for i, layer in enumerate(layers):
         record(layer, f"layer{i}")
-    record(m.norm, "final_norm")
-    l0 = m.layers[0]
+    record(m.ln_f if gpt2 else m.norm, "final_norm")
+    l0 = layers[0]
     # Layer 0's blocks, for block-level tests. Its token mixer is attention or, in hybrid
     # models such as Qwen3.5, Gated DeltaNet.
     for name in ("input_layernorm", "self_attn", "linear_attn", "post_attention_layernorm", "mlp"):

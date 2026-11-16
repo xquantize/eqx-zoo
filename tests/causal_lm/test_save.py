@@ -106,7 +106,7 @@ def test_transformers_loads_saved_multimodal_language_model(case, tmp_path):
     """Transformers loads a saved multimodal language model and reproduces the reference."""
     from eqx_zoo.models.causal_lm.config import TEXT_ONLY_ARCHITECTURES
 
-    if case.model.config.architecture not in TEXT_ONLY_ARCHITECTURES:
+    if getattr(case.model.config, "architecture", None) not in TEXT_ONLY_ARCHITECTURES:
         pytest.skip("not a multimodal checkpoint")
     case.model.save_pretrained(tmp_path)
     hf = AutoModelForCausalLM.from_pretrained(tmp_path, attn_implementation="eager").eval()

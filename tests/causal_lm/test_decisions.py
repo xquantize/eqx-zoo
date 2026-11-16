@@ -39,7 +39,7 @@ def cached_teacher_forced(model, ids):
 def long_input(case) -> jnp.ndarray:
     if "long_input_ids" not in case.reference:
         pytest.skip("no long-input reference for this model")
-    if case.model.config.moe_layers:
+    if getattr(case.model.config, "moe_layers", ()):
         # Routing makes discrete choices: in bf16, a near-tied choice of expert can go either
         # way depending on the CPU, changing a token's output by far more than rounding. On
         # one CI runner, correct MiniMind code flipped a 12.1 sigma decision, while passing

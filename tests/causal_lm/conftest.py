@@ -1,22 +1,34 @@
 """Fixtures for the causal language model tests: every tiny model and checkpoint as a case."""
 
 import dataclasses
+import json
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from huggingface_hub import hf_hub_download
 from support.registry import CHECKPOINTS, TINY_MODELS
 from support.tiny import build
 
 from eqx_zoo import CausalLM
+from eqx_zoo.models.gpt2 import GPT2
 
 
 @dataclasses.dataclass(frozen=True)
 class Case:
     name: str
     source: str
-    model: CausalLM
+    model: CausalLM | GPT2
     reference: dict[str, np.ndarray]
+
+
+def model_class(source: str):
+    """The eqx-zoo class for a checkpoint: `GPT2` for GPT-2, otherwise `CausalLM`."""
+    path = Path(source)
+    config = path / "config.json" if path.is_dir() else Path(hf_hub_download(source, "config.json"))
+    architecture = json.loads(config.read_text())["architectures"][0]
+    return GPT2 if architecture == "GPT2LMHeadModel" else CausalLM
 
 
 @pytest.fixture(
@@ -36,10 +48,11 @@ def case(request, get_reference, tmp_path_factory) -> Case:
     else:
         reference = get_reference(name)  # capture first, so the HF model is freed before ours
         source = CHECKPOINTS[name]
-    return Case(name, source, CausalLM.from_pretrained(source, dtype=jnp.float32), reference)
+    model = model_class(source).from_pretrained(source, dtype=jnp.float32)
+    return Case(name, source, model, reference)
 
 
 @pytest.fixture(scope="package")
-def bf16_model(case) -> CausalLM:
+def bf16_model(case) -> CausalLM | GPT2:
     """The same model as `case`, loaded in bfloat16 as a user would."""
-    return CausalLM.from_pretrained(case.source, dtype=jnp.bfloat16)
+    return model_class(case.source).from_pretrained(case.source, dtype=jnp.bfloat16)

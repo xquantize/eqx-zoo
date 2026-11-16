@@ -24,13 +24,17 @@ def loss_fn(model, ids):
 
 
 def to_pytorch_layout(ours: dict[str, np.ndarray], expected: dict) -> dict[str, np.ndarray]:
-    """Rearrange stacked mixture-of-experts gradients into Hugging Face's parameter layout.
+    """Rename our gradients to Hugging Face's parameter names and layout.
 
-    transformers 5 fuses each layer's experts (`experts.gate_up_proj`, with gate and up
-    stacked along the output axis, and `experts.down_proj`); transformers 4 keeps one module
-    per expert (`experts.0.gate_proj.weight`, ...).
+    GPT-2's parameters sit under `transformer.` in Hugging Face. For mixture-of-experts
+    models, transformers 5 fuses each layer's experts (`experts.gate_up_proj`, with gate and
+    up stacked along the output axis, and `experts.down_proj`); transformers 4 keeps one
+    module per expert (`experts.0.gate_proj.weight`, ...).
     """
     out = dict(ours)
+    if any(name.startswith("transformer.") for name in expected):
+        # GPT-2: Transformers keeps the blocks and embeddings under `transformer.`.
+        out = {f"transformer.{name}": grad for name, grad in out.items()}
     for name in list(ours):
         if not name.endswith(".experts.gate_proj.weight"):
             continue

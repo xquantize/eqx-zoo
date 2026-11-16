@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from eqx_zoo.layers import causal_mask
+from eqx_zoo.models.gpt2 import GPT2
 
 TOL = dict(rtol=1e-3, atol=1e-3)
 
@@ -14,6 +15,19 @@ def test_layer_by_layer(case):
     ids = jnp.asarray(ref["input_ids"])
     positions = jnp.arange(ids.shape[0])
     mask = causal_mask(positions, positions)
+
+    if isinstance(model, GPT2):
+        # Hugging Face's `wte` gives the token embedding alone; positions are added after it.
+        x = model.wte.weight[ids]
+        np.testing.assert_array_equal(x, ref["embed"])
+        x = x + model.wpe.weight[positions]
+        for i, block in enumerate(model.h):
+            x, _ = block(x, mask)
+            np.testing.assert_allclose(
+                x, ref[f"layer{i}"], **TOL, err_msg=f"{case.name}: layer {i}"
+            )
+        np.testing.assert_allclose(model.ln_f(x), ref["final_norm"], **TOL)
+        return
 
     x = model.model.embed_tokens.weight[ids]
     np.testing.assert_array_equal(x, ref["embed"])
