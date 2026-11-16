@@ -10,6 +10,7 @@ CHECKPOINTS = {
     "llama-3.2-1b": "unsloth/Llama-3.2-1B",
     "minimind-3-moe": "jingyaogong/minimind-3-moe",
     "nano-mistral": "crumb/nano-mistral",  # Mistral; its sliding window exceeds its context
+    "gpt2": "openai-community/gpt2",  # GPT-2 small (124M)
 }
 
 # Tiny randomly initialised models: test id -> (transformers config class, config overrides).
@@ -72,6 +73,8 @@ TINY_MODELS = {
     ),
     # Mistral: Llama-style attention without biases; untied output head; no sliding window.
     "tiny-mistral": ("MistralConfig", {"sliding_window": None, "tie_word_embeddings": False}),
+    # GPT-2: learned positions, LayerNorm, fused Conv1D projections, tied output head.
+    "tiny-gpt2": ("GPT2Config", {}),
 }
 
 # Pretrained encoders: test id -> Hugging Face repository.

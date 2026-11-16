@@ -11,7 +11,7 @@ from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 from safetensors import safe_open
 
-from eqx_zoo._loading import load_safetensors
+from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetensors
 from eqx_zoo.layers import Cache, KVCache, LayerNorm, causal_mask, dot_product_attention
 from eqx_zoo.layers._common import at_least_float32
 from eqx_zoo.models.gpt2.config import GPT2Config
@@ -366,3 +366,26 @@ class GPT2(eqx.Module):
         return load_safetensors(
             skeleton, files, ignore=ignore, prefixes={"": prefix} if prefix else None
         )
+
+    def save_pretrained(self, directory: str | os.PathLike[str]) -> None:
+        """Save in Hugging Face format, as `config.json` and `model.safetensors`.
+
+        Writes back the `config.json` the model was loaded with (its dtype set to the saved
+        parameters'), and the weights named as Transformers saves GPT-2 (`transformer.h.0...`),
+        with the output head tied to the token embedding.
+
+        Args:
+            directory: Destination directory; created if needed.
+
+        Raises:
+            ValueError: If the model wasn't loaded with `from_pretrained`.
+        """
+        if self.hf_config is None:
+            raise ValueError(
+                "only models loaded with from_pretrained can be saved: there is no original "
+                "config.json to write back"
+            )
+        path = Path(directory)
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "config.json").write_text(config_with_dtype(self.hf_config, self.wte.weight.dtype))
+        save_safetensors(self, path / "model.safetensors", prefixes={"": "transformer."})
