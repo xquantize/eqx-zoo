@@ -81,6 +81,8 @@ def causal_mask(
     query_slots: Int[Array, " seq"],
     key_slots: Int[Array, " keys"],
     key_valid: Bool[Array, " keys"] | None = None,
+    *,
+    window: int | None = None,
 ) -> Bool[Array, "seq keys"]:
     """Mask allowing each query to attend to keys in the same or earlier slots.
 
@@ -88,11 +90,18 @@ def causal_mask(
         query_slots: Slot of each query token.
         key_slots: Slot of each key.
         key_valid: Optional; keys marked `False`, e.g. padding, are masked out.
+        window: Optional sliding window: a query attends to at most the `window` latest
+            slots, itself included (`query - window < key <= query`). The window counts
+            slots, as in Transformers. With left padding, counting slots and counting
+            positions select the same real keys, so the distinction only matters for
+            padding between real tokens, which isn't supported.
 
     Returns:
         `True` where a query may attend to a key.
     """
     mask = key_slots[None, :] <= query_slots[:, None]
+    if window is not None:
+        mask &= key_slots[None, :] > query_slots[:, None] - window
     return mask if key_valid is None else mask & key_valid[None, :]
 
 
