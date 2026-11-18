@@ -99,7 +99,11 @@ class DecoderEmbedder(eqx.Module):
         valid = jnp.ones(seq, dtype=bool) if attention_mask is None else attention_mask.astype(bool)
         slots = jnp.arange(seq)
         positions = jnp.maximum(jnp.cumsum(valid) - 1, 0)
-        hidden, _ = self.model(input_ids, positions, causal_mask(slots, slots, valid))
+        hidden, _ = self.model(
+            input_ids,
+            positions,
+            causal_mask(slots, slots, valid, window=self.config.sliding_window),
+        )
         return hidden
 
     def embed(

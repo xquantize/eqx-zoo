@@ -319,13 +319,18 @@ class CausalLM(eqx.Module):
         if cache is None:
             slots = jnp.arange(seq)
             positions = jnp.maximum(jnp.cumsum(valid) - 1, 0)
-            mask = causal_mask(slots, slots, valid)
+            mask = causal_mask(slots, slots, valid, window=self.config.sliding_window)
             hidden, layer_caches = self.model(input_ids, positions, mask, valid=valid)
         else:
             slots = cache.length + jnp.arange(seq)
             positions = jnp.maximum(cache.valid.sum() + jnp.cumsum(valid) - 1, 0)
             key_valid = jax.lax.dynamic_update_slice(cache.valid, valid, (cache.length,))
-            mask = causal_mask(slots, jnp.arange(key_valid.shape[0]), key_valid)
+            mask = causal_mask(
+                slots,
+                jnp.arange(key_valid.shape[0]),
+                key_valid,
+                window=self.config.sliding_window,
+            )
             hidden, layer_caches = self.model(
                 input_ids, positions, mask, cache.layers, cache_index=cache.length, valid=valid
             )

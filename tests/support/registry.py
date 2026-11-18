@@ -73,6 +73,8 @@ TINY_MODELS = {
     ),
     # Mistral: Llama-style attention without biases; untied output head; no sliding window.
     "tiny-mistral": ("MistralConfig", {"sliding_window": None, "tie_word_embeddings": False}),
+    # Mistral with a 4-token sliding window, shorter than the prompt, so it takes effect.
+    "tiny-mistral-window": ("MistralConfig", {"sliding_window": 4, "tie_word_embeddings": False}),
     # GPT-2: learned positions, LayerNorm, fused Conv1D projections, tied output head.
     "tiny-gpt2": ("GPT2Config", {}),
 }
