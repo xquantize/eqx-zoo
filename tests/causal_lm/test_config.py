@@ -194,12 +194,16 @@ def test_mistral():
     assert config.rope_theta == 1_000_000.0
 
 
-def test_mistral_window_longer_than_context_is_accepted():
-    """nano-mistral: a 4,096-token window in a 2,048-token context can never take effect."""
-    Config.from_hf(MISTRAL_V03 | {"sliding_window": 4096, "max_position_embeddings": 2048})
-
-
-def test_mistral_rejects_an_effective_sliding_window():
+def test_mistral_stores_an_effective_sliding_window():
     """Mistral-7B v0.1: a 4,096-token window in a 32,768-token context."""
-    with pytest.raises(NotImplementedError, match="sliding-window"):
-        Config.from_hf(MISTRAL_V03 | {"sliding_window": 4096})
+    assert Config.from_hf(MISTRAL_V03 | {"sliding_window": 4096}).sliding_window == 4096
+
+
+def test_mistral_stores_a_window_longer_than_the_context():
+    """nano-mistral: Transformers applies the window whatever the context length."""
+    config = Config.from_hf(MISTRAL_V03 | {"sliding_window": 4096, "max_position_embeddings": 2048})
+    assert config.sliding_window == 4096
+
+
+def test_mistral_without_a_window():
+    assert Config.from_hf(MISTRAL_V03).sliding_window is None

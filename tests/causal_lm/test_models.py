@@ -14,7 +14,9 @@ def test_layer_by_layer(case):
     model, ref = case.model, case.reference
     ids = jnp.asarray(ref["input_ids"])
     positions = jnp.arange(ids.shape[0])
-    mask = causal_mask(positions, positions)
+    # The mask the model builds itself, window included; GPT-2 has none.
+    window = None if isinstance(model, GPT2) else model.config.sliding_window
+    mask = causal_mask(positions, positions, window=window)
 
     if isinstance(model, GPT2):
         # Hugging Face's `wte` gives the token embedding alone; positions are added after it.

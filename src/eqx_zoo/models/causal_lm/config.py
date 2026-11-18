@@ -85,6 +85,8 @@ class Config:
             for all of them.
         attn_output_gate: Whether attention has a per-head sigmoid output gate.
         zero_centered_norm: Whether RMSNorms scale by `1 + weight`, as in Qwen3.5.
+        sliding_window: Keys each query may attend to, counting itself, or None for full
+            causal attention.
     """
 
     architecture: str
@@ -116,6 +118,7 @@ class Config:
     rotary_dim: int | None = None
     attn_output_gate: bool = False
     zero_centered_norm: bool = False
+    sliding_window: int | None = None
 
     @classmethod
     def from_hf(cls, config: dict[str, Any]) -> "Config":
@@ -157,21 +160,9 @@ class Config:
             raise NotImplementedError("MLP bias is not supported yet")
         if config.get("use_sliding_window", False):
             raise NotImplementedError("sliding-window attention is not supported yet")
-        if config.get("mlp_bias", False):
-            raise NotImplementedError("MLP bias is not supported yet")
-        if config.get("use_sliding_window", False):
-            raise NotImplementedError("sliding-window attention is not supported yet")
-        if features.get("sliding_window"):
-            # Mistral's window only matters if it's shorter than the context: Mistral-7B v0.3
-            # has none, and some small checkpoints have one longer than their whole context.
-            window, context = config.get("sliding_window"), config["max_position_embeddings"]
-            if window is not None and window < context:
-                raise NotImplementedError(
-                    f"sliding-window attention (a {window}-token window in a {context}-token "
-                    "context) is not supported yet"
-                )
-        if config.get("hidden_act", "silu") != "silu":
-            raise NotImplementedError(f"activation {config['hidden_act']!r} is not supported")
+        # Mistral's window is stored whatever the context length, as Transformers applies it
+        # unconditionally. Mistral-7B v0.3 has none (`None`).
+        sliding_window = config.get("sliding_window") if features.get("sliding_window") else None
         if config.get("hidden_act", "silu") != "silu":
             raise NotImplementedError(f"activation {config['hidden_act']!r} is not supported")
 
@@ -238,5 +229,6 @@ class Config:
             moe_layers=moe_layers,
             pad_token_id=config.get("pad_token_id"),
             rotary_dim=rotary_dim,
+            sliding_window=sliding_window,
             **hybrid,
         )
