@@ -11,6 +11,7 @@ CHECKPOINTS = {
     "minimind-3-moe": "jingyaogong/minimind-3-moe",
     "nano-mistral": "crumb/nano-mistral",  # Mistral; its sliding window exceeds its context
     "gpt2": "openai-community/gpt2",  # GPT-2 small (124M)
+    "pythia-160m": "EleutherAI/pythia-160m",  # GPT-NeoX; parallel residual, partial rotary
 }
 
 # Tiny randomly initialised models: test id -> (transformers config class, config overrides).
