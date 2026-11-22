@@ -7,6 +7,7 @@ from eqx_zoo.layers import Cache
 from eqx_zoo.models.causal_lm import CausalLM, Config, DecoderEmbedder
 from eqx_zoo.models.encoder import Encoder, EncoderConfig
 from eqx_zoo.models.gpt2 import GPT2, GPT2Config
+from eqx_zoo.models.gpt_neox import GPTNeoX, GPTNeoXConfig
 
 __all__ = [
     "Cache",
@@ -17,6 +18,8 @@ __all__ = [
     "EncoderConfig",
     "GPT2",
     "GPT2Config",
+    "GPTNeoX",
+    "GPTNeoXConfig",
     "generate",
     "generate_batch",
 ]
