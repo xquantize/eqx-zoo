@@ -60,12 +60,26 @@ def test_bf16_accuracy_jit(case, bf16_model):
     assert error <= limit, f"{case.name}: JIT bf16 RMS error {error:.4g} exceeds {limit:.4g}"
 
 
+def top_k_misses(bf16_logits: np.ndarray, float32_logits: np.ndarray, k: int = TOP_K) -> list[int]:
+    """Positions where float32's top-1 token is not among bf16's top `k`, counting ties.
+
+    The token is among the top `k` unless at least `k` tokens have a strictly larger bf16
+    logit. Ranking by `argsort` instead would break ties arbitrarily, which matters for
+    models with large logits: Pythia's reach about 840, where bf16 values are 4 apart, so a
+    margin of under 1 in float32 becomes a tie of a dozen tokens at the top. Without ties
+    the two criteria are identical.
+    """
+    expected = float32_logits.argmax(-1)
+    own = np.take_along_axis(bf16_logits, expected[:, None], axis=-1)
+    larger = (bf16_logits > own).sum(-1)
+    return [int(i) for i in np.flatnonzero(larger >= k)]
+
+
 def test_bf16_top1_in_top5(case, bf16_model):
+    """Float32's top-1 token is among our bf16 top 5 at every position, counting ties."""
     ref = case.reference
     ours = forward(bf16_model, jnp.asarray(ref["input_ids"]))
-    top_k = np.argsort(ours, axis=-1)[:, -TOP_K:]
-    expected = ref["logits"].argmax(-1)
-    missing = [i for i, (e, row) in enumerate(zip(expected, top_k, strict=True)) if e not in row]
+    missing = top_k_misses(ours, ref["logits"])
     assert not missing, f"{case.name}: fp32 top-1 not in bf16 top-{TOP_K} at positions {missing}"
 
 
