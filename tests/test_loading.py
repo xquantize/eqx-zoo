@@ -1,6 +1,5 @@
 """Tests for loading checkpoints."""
 
-import json
 from pathlib import Path
 
 import equinox as eqx
@@ -10,12 +9,12 @@ import pytest
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from safetensors.numpy import save_file
+from support.models import model_class
 from support.registry import CHECKPOINTS, TINY_MODELS
 from support.tiny import build
 
 from eqx_zoo import CausalLM
 from eqx_zoo._loading import load_safetensors
-from eqx_zoo.models.gpt2 import GPT2
 
 
 @pytest.mark.checkpoint("smollm2-135m")
@@ -95,8 +94,7 @@ def test_save_round_trip(name, tmp_path):
     """Saved weights have Transformers' own tensor names, and reload bit-identically."""
     source, target = tmp_path / "source", tmp_path / "saved"
     build(name, source)
-    architecture = json.loads((source / "config.json").read_text())["architectures"][0]
-    cls = GPT2 if architecture == "GPT2LMHeadModel" else CausalLM
+    cls = model_class(source)
     model = cls.from_pretrained(source)
     model.save_pretrained(target)
 

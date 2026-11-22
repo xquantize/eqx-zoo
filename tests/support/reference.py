@@ -29,6 +29,24 @@ def capture(repo_id: str) -> dict[str, np.ndarray]:
     return {**capture_model(model, ids), "bf16_logits": bf16_logits(model, ids)}
 
 
+def decoder_parts(model):
+    """A Transformers causal LM's token embedding, layers and final norm.
+
+    Llama-style models keep their decoder in `model.model`, GPT-2 in `model.transformer`.
+
+    Args:
+        model: A Transformers causal language model.
+
+    Returns:
+        The embedding module, the list of layers, and the final norm module.
+    """
+    if hasattr(model, "transformer"):
+        m = model.transformer
+        return m.wte, m.h, m.ln_f
+    m = model.model
+    return m.embed_tokens, m.layers, m.norm
+
+
 def capture_model(model, input_ids) -> dict[str, np.ndarray]:
     """Record activations and a greedy continuation for `input_ids` of shape (1, seq).
 
@@ -46,14 +64,11 @@ def capture_model(model, input_ids) -> dict[str, np.ndarray]:
 
         handles.append(module.register_forward_hook(hook))
 
-    # Llama-style models keep their decoder in `model.model`; GPT-2 in `model.transformer`.
-    gpt2 = hasattr(model, "transformer")
-    m = model.transformer if gpt2 else model.model
-    layers = m.h if gpt2 else m.layers
-    record(m.wte if gpt2 else m.embed_tokens, "embed")
+    embedding, layers, final_norm = decoder_parts(model)
+    record(embedding, "embed")
     for i, layer in enumerate(layers):
         record(layer, f"layer{i}")
-    record(m.ln_f if gpt2 else m.norm, "final_norm")
+    record(final_norm, "final_norm")
     l0 = layers[0]
     # Layer 0's blocks, for block-level tests. Its token mixer is attention or, in hybrid
     # models such as Qwen3.5, Gated DeltaNet.
