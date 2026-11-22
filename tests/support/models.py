@@ -7,10 +7,12 @@ from huggingface_hub import hf_hub_download
 
 from eqx_zoo import CausalLM
 from eqx_zoo.models.gpt2 import GPT2
+from eqx_zoo.models.gpt_neox import GPTNeoX
 
 # Architectures with their own model class; every other architecture is a `CausalLM`.
 CLASSES = {
     "GPT2LMHeadModel": GPT2,
+    "GPTNeoXForCausalLM": GPTNeoX,
 }
 
 

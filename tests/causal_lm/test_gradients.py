@@ -26,7 +26,8 @@ def loss_fn(model, ids):
 def to_pytorch_layout(ours: dict[str, np.ndarray], expected: dict) -> dict[str, np.ndarray]:
     """Rename our gradients to Hugging Face's parameter names and layout.
 
-    GPT-2's parameters sit under `transformer.` in Hugging Face. For mixture-of-experts
+    GPT-2's parameters sit under `transformer.` in Hugging Face. GPT-NeoX's output head is
+    `embed_out` here and in transformers 4, but `lm_head` in transformers 5. For mixture-of-experts
     models, transformers 5 fuses each layer's experts (`experts.gate_up_proj`, with gate and
     up stacked along the output axis, and `experts.down_proj`); transformers 4 keeps one
     module per expert (`experts.0.gate_proj.weight`, ...).
@@ -35,6 +36,8 @@ def to_pytorch_layout(ours: dict[str, np.ndarray], expected: dict) -> dict[str, 
     if any(name.startswith("transformer.") for name in expected):
         # GPT-2: Transformers keeps the blocks and embeddings under `transformer.`.
         out = {f"transformer.{name}": grad for name, grad in out.items()}
+    if "embed_out.weight" in out and "lm_head.weight" in expected:
+        out["lm_head.weight"] = out.pop("embed_out.weight")
     for name in list(ours):
         if not name.endswith(".experts.gate_proj.weight"):
             continue

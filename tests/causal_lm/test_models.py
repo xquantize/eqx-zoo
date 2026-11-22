@@ -6,6 +6,7 @@ import numpy as np
 
 from eqx_zoo.layers import causal_mask
 from eqx_zoo.models.gpt2 import GPT2
+from eqx_zoo.models.gpt_neox import GPTNeoX
 
 TOL = dict(rtol=1e-3, atol=1e-3)
 
@@ -14,8 +15,8 @@ def test_layer_by_layer(case):
     model, ref = case.model, case.reference
     ids = jnp.asarray(ref["input_ids"])
     positions = jnp.arange(ids.shape[0])
-    # The mask the model builds itself, window included; GPT-2 has none.
-    window = None if isinstance(model, GPT2) else model.config.sliding_window
+    # The mask the model builds itself, window included; only some `CausalLM`s have one.
+    window = getattr(model.config, "sliding_window", None)
     mask = causal_mask(positions, positions, window=window)
 
     if isinstance(model, GPT2):
@@ -31,14 +32,24 @@ def test_layer_by_layer(case):
         np.testing.assert_allclose(model.ln_f(x), ref["final_norm"], **TOL)
         return
 
-    x = model.model.embed_tokens.weight[ids]
+    if isinstance(model, GPTNeoX):
+        # Same wiring as the Llama-style decoders (positions, mask), under GPT-NeoX's names.
+        embedding, layers, norm = (
+            model.gpt_neox.embed_in,
+            model.gpt_neox.layers,
+            model.gpt_neox.final_layer_norm,
+        )
+    else:
+        embedding, layers, norm = model.model.embed_tokens, model.model.layers, model.model.norm
+
+    x = embedding.weight[ids]
     np.testing.assert_array_equal(x, ref["embed"])
 
-    for i, layer in enumerate(model.model.layers):
+    for i, layer in enumerate(layers):
         x, _ = layer(x, positions, mask)
         np.testing.assert_allclose(x, ref[f"layer{i}"], **TOL, err_msg=f"{case.name}: layer {i}")
 
-    np.testing.assert_allclose(model.model.norm(x), ref["final_norm"], **TOL)
+    np.testing.assert_allclose(norm(x), ref["final_norm"], **TOL)
 
 
 def test_logits(case):
