@@ -77,6 +77,14 @@ TINY_MODELS = {
     "tiny-mistral-window": ("MistralConfig", {"sliding_window": 4, "tie_word_embeddings": False}),
     # GPT-2: learned positions, LayerNorm, fused Conv1D projections, tied output head.
     "tiny-gpt2": ("GPT2Config", {}),
+    # GPT-NeoX: fused per-head-interleaved qkv, LayerNorm, GELU MLP, untied output head; a
+    # parallel residual and the default partial rotary (a quarter of each 16-dim head: 4 dims).
+    "tiny-gpt-neox": ("GPTNeoXConfig", {}),
+    # GPT-NeoX with a sequential residual and rotary over the whole head (rotary_pct 1.0).
+    "tiny-gpt-neox-sequential": (
+        "GPTNeoXConfig",
+        {"use_parallel_residual": False, "rotary_pct": 1.0},
+    ),
 }
 
 # Pretrained encoders: test id -> Hugging Face repository.

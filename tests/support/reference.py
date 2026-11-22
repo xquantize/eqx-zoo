@@ -32,7 +32,8 @@ def capture(repo_id: str) -> dict[str, np.ndarray]:
 def decoder_parts(model):
     """A Transformers causal LM's token embedding, layers and final norm.
 
-    Llama-style models keep their decoder in `model.model`, GPT-2 in `model.transformer`.
+    Llama-style models keep their decoder in `model.model`, GPT-2 in `model.transformer`, and
+    GPT-NeoX in `model.gpt_neox`.
 
     Args:
         model: A Transformers causal language model.
@@ -43,6 +44,9 @@ def decoder_parts(model):
     if hasattr(model, "transformer"):
         m = model.transformer
         return m.wte, m.h, m.ln_f
+    if hasattr(model, "gpt_neox"):
+        m = model.gpt_neox
+        return m.embed_in, m.layers, m.final_layer_norm
     m = model.model
     return m.embed_tokens, m.layers, m.norm
 

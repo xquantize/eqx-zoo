@@ -11,13 +11,14 @@ from support.tiny import build
 
 from eqx_zoo import CausalLM
 from eqx_zoo.models.gpt2 import GPT2
+from eqx_zoo.models.gpt_neox import GPTNeoX
 
 
 @dataclasses.dataclass(frozen=True)
 class Case:
     name: str
     source: str
-    model: CausalLM | GPT2
+    model: CausalLM | GPT2 | GPTNeoX
     reference: dict[str, np.ndarray]
 
 
@@ -43,6 +44,6 @@ def case(request, get_reference, tmp_path_factory) -> Case:
 
 
 @pytest.fixture(scope="package")
-def bf16_model(case) -> CausalLM | GPT2:
+def bf16_model(case) -> CausalLM | GPT2 | GPTNeoX:
     """The same model as `case`, loaded in bfloat16 as a user would."""
     return model_class(case.source).from_pretrained(case.source, dtype=jnp.bfloat16)
