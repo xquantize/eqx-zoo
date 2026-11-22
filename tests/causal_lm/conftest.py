@@ -1,13 +1,11 @@
 """Fixtures for the causal language model tests: every tiny model and checkpoint as a case."""
 
 import dataclasses
-import json
-from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from huggingface_hub import hf_hub_download
+from support.models import model_class
 from support.registry import CHECKPOINTS, TINY_MODELS
 from support.tiny import build
 
@@ -21,14 +19,6 @@ class Case:
     source: str
     model: CausalLM | GPT2
     reference: dict[str, np.ndarray]
-
-
-def model_class(source: str):
-    """The eqx-zoo class for a checkpoint: `GPT2` for GPT-2, otherwise `CausalLM`."""
-    path = Path(source)
-    config = path / "config.json" if path.is_dir() else Path(hf_hub_download(source, "config.json"))
-    architecture = json.loads(config.read_text())["architectures"][0]
-    return GPT2 if architecture == "GPT2LMHeadModel" else CausalLM
 
 
 @pytest.fixture(
