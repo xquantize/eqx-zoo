@@ -364,3 +364,4 @@ def capture_hidden_gradients(model, input_ids) -> dict[str, np.ndarray]:
     }
     model.zero_grad()
     return {"grad_probe": probe, **grads}
+# Recapture check: forces a reference cache miss.
