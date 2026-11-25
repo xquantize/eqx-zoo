@@ -19,6 +19,7 @@ from eqx_zoo import Encoder  # noqa: E402
 from eqx_zoo.lora import LoRAConv1D, LoRALinear, add_adapter, trainable  # noqa: E402
 from eqx_zoo.lora.adapt import adapter_layers  # noqa: E402
 from lora.helpers import IDS, MODELS, adapted, leaves, load  # noqa: E402
+from lora.peft_adapters import relative_error  # noqa: E402
 
 # Per model: target_modules for a list (suffix matching), a regex, and an exact full name.
 TARGETS = {
@@ -115,7 +116,14 @@ def test_a_fresh_adapter_changes_nothing(checkpoint, name):
     base, model = adapted(checkpoint, name, lora_bias=True)
     expected, got = base(IDS)[0], model(IDS)[0]
     assert got.dtype == expected.dtype
-    assert np.array_equal(np.asarray(got), np.asarray(expected))
+    # The adapter adds exact zeros, but that doesn't guarantee identical logits: wrapping the
+    # layers changes the program XLA runs, which may then fuse or order the arithmetic
+    # differently (bit-identity held on ARM, but not on CI's x86). CI showed differences of
+    # about 1e-7 (the elements visible in its log: 1.2e-7 for Llama and 1.1e-7 for Qwen2, on
+    # logits up to about 1.5). For scale, running the same base model eagerly and jitted
+    # differs by up to 3.4e-7 of the largest logit. The tolerance is about 3x that; a
+    # non-zero adapter changes the logits by order 1e-2 or more.
+    assert relative_error(got, np.asarray(expected, np.float32)) <= 1e-6
 
 
 @pytest.mark.parametrize("name", MODELS)
@@ -163,7 +171,10 @@ def test_works_on_bfloat16_models(checkpoint):
     model = add_adapter(base, r=4, alpha=8, target_modules="all-linear", key=jax.random.key(0))
     layer = model.model.layers[0].self_attn.q_proj
     assert layer.base.weight.dtype == jnp.bfloat16 and layer.lora_A.dtype == jnp.float32
-    assert np.array_equal(np.asarray(model(IDS)[0]), np.asarray(base(IDS)[0]))
+    # As above, exact equality isn't guaranteed. In bfloat16 the same base model run eagerly and
+    # jitted differs by 7.7e-3 of the largest logit (one rounding step), and a jitted adapted
+    # model differs from the jitted base by 1.0e-2; the tolerance is 2**-6 (1.6e-2).
+    assert relative_error(model(IDS)[0], np.asarray(base(IDS)[0], np.float32)) <= 2**-6
 
 
 # --- trainable ---
