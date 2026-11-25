@@ -209,3 +209,45 @@ def test_one_adapted_layer_is_enough_to_refuse(checkpoint, tmp_path, name):
 def test_merging_a_plain_model_is_refused(checkpoint):
     with pytest.raises(ValueError, match="no adapter to merge"):
         merge(load(checkpoint, "tiny-llama"))
+
+
+def first_linear(model):
+    """The first `eqx.nn.Linear` in a model, by identity (for `eqx.tree_at`)."""
+    import equinox as eqx
+
+    def is_linear(node):
+        return isinstance(node, eqx.nn.Linear)
+
+    return next(n for n in jax.tree_util.tree_leaves(model, is_leaf=is_linear) if is_linear(n))
+
+
+@pytest.mark.parametrize("kind", ["encoder", "embedder"])
+def test_encoders_and_embedders_refuse_before_writing_anything(tmp_path, kind):
+    """No model class may write part of a directory and then fail on an adapter layer."""
+    import equinox as eqx
+    from support.tiny import build_embedder, build_encoder
+
+    from eqx_zoo import DecoderEmbedder, Encoder
+    from eqx_zoo.lora import LoRALinear
+
+    source = tmp_path / "source"
+    if kind == "encoder":
+        build_encoder("tiny-bert", source)
+        cls = Encoder
+    else:
+        build_embedder("tiny-qwen3-embedder", source)
+        cls = DecoderEmbedder
+    model = cls.from_pretrained(source)
+
+    # `add_adapter` doesn't take these models, so wrap a layer by hand.
+    linear = first_linear(model)
+    layer = LoRALinear(
+        linear, jnp.zeros((2, linear.in_features)), jnp.zeros((linear.out_features, 2)), alpha=1.0
+    )
+    adapted_model = eqx.tree_at(first_linear, model, layer)
+
+    with pytest.raises(ValueError, match="LoRA adapter"):
+        adapted_model.save_pretrained(tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+    model.save_pretrained(tmp_path / "ok")  # without the adapter layer, the model saves
+    assert (tmp_path / "ok" / "model.safetensors").exists()
