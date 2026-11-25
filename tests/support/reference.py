@@ -106,6 +106,56 @@ def capture_model(model, input_ids) -> dict[str, np.ndarray]:
     }
 
 
+def capture_adapter(base_repo: str, adapter_repo: str, revision: str) -> dict[str, np.ndarray]:
+    """Record PEFT's outputs for a Hub LoRA adapter on its base model, in float32.
+
+    Loads the base model directly in float32 and the adapter with `PeftModel.from_pretrained`.
+    Records the logits and greedy continuation with the adapter, the logits of the same model
+    with the adapter disabled (to show that the adapter matters), the logits after
+    `merge_and_unload`, and the names of the layers PEFT adapted.
+    """
+    import peft
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(base_repo)
+    base = AutoModelForCausalLM.from_pretrained(
+        base_repo, dtype=torch.float32, attn_implementation="eager"
+    )
+    model = peft.PeftModel.from_pretrained(base.float().eval(), adapter_repo, revision=revision)
+    model = model.eval()
+    ids = tok(PROMPT, return_tensors="pt").input_ids
+
+    with torch.no_grad():
+        logits = model(ids).logits
+        with model.disable_adapter():
+            base_logits = model(ids).logits
+        # Plain greedy decoding: an instruct model's generation_config can set a repetition
+        # penalty (Qwen2.5-Instruct: 1.1), which `generate` applies even when not sampling.
+        out = model.generate(
+            ids,
+            attention_mask=torch.ones_like(ids),
+            max_new_tokens=NEW_TOKENS,
+            do_sample=False,
+            repetition_penalty=1.0,
+        )
+    adapted = [
+        name.removeprefix("base_model.model.")
+        for name, module in model.named_modules()
+        if isinstance(module, peft.tuners.lora.LoraLayer)
+    ]
+    with torch.no_grad():
+        merged_logits = model.merge_and_unload()(ids).logits
+    return {
+        "input_ids": ids[0].numpy(),
+        "logits": logits[0].float().numpy(),
+        "base_logits": base_logits[0].float().numpy(),
+        "merged_logits": merged_logits[0].float().numpy(),
+        "generated": out[0, ids.shape[1] :].numpy(),
+        "adapted_modules": np.array(sorted(adapted)),
+    }
+
+
 def bf16_logits(model, input_ids) -> np.ndarray:
     """Logits after casting `model` to bfloat16 in place: the yardstick for bf16 accuracy."""
     import torch
