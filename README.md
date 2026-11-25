@@ -120,6 +120,39 @@ model.save_pretrained("my-embedder")
 
 Multimodal checkpoints such as Qwen3.5's are saved as their text-only language model (for example `Qwen3_5ForCausalLM`), since eqx-zoo loads only the language model.
 
+## LoRA fine-tuning
+
+`eqx_zoo.lora` adds [LoRA](https://arxiv.org/abs/2106.09685) adapters to language models, compatible with Hugging Face's [PEFT](https://github.com/huggingface/peft): you can train an adapter in JAX and use it from PEFT, or load a PEFT adapter from the Hub. eqx-zoo reads and writes PEFT's file format, so it doesn't depend on PEFT itself.
+
+```python
+import equinox as eqx
+import jax
+from eqx_zoo import CausalLM, lora
+
+model = CausalLM.from_pretrained("Qwen/Qwen3-0.6B")
+model = lora.add_adapter(
+    model, r=8, alpha=16, target_modules=["q_proj", "v_proj"], key=jax.random.key(0)
+)
+
+# Train only the adapter: `trainable` marks its arrays, and everything else stays frozen.
+trainable, frozen = eqx.partition(model, lora.trainable(model))
+# ... optimise `trainable` with any JAX optimiser, calling eqx.combine(trainable, frozen) ...
+model = eqx.combine(trainable, frozen)
+
+lora.save_adapter(model, "my-adapter")  # PEFT loads it with PeftModel.from_pretrained
+
+# Load an adapter from the Hub, then fold it into the weights to save an ordinary model.
+base = CausalLM.from_pretrained("Qwen/Qwen3-0.6B")
+model = lora.load_adapter(base, "phh/Qwen3-0.6B-TLDR-Lora")
+lora.merge(model).save_pretrained("qwen3-tldr")
+```
+
+`save_pretrained` refuses a model that has an adapter, since the adapter's layers would be saved under the wrong names: merge it first, or save the adapter alone with `save_adapter`. For a complete example, training an adapter for SmolLM2-135M with Optax and checking it in PEFT, see [`examples/lora_finetune.py`](https://github.com/xquantize/eqx-zoo/blob/main/examples/lora_finetune.py).
+
+Supported: `CausalLM` (Llama, Qwen, Mistral), `GPT2` and `GPTNeoX` models; plain LoRA, rank-stabilised LoRA (`rslora`) and `lora_bias`; and PEFT's `target_modules` semantics (names matched as suffixes, regular expressions, or `"all-linear"`). A model has one adapter, kept in float32 as in PEFT. Not supported yet, and refused with an error: DoRA, `modules_to_save`, per-module ranks or alphas, trained biases, dropout in training (`lora_dropout` is accepted when loading, as it doesn't affect inference), Qwen3.5 and mixture-of-experts models, and encoders.
+
+Adapters are verified against PEFT: on tiny models, forward outputs and the gradients of the adapter's weights match; PEFT adapters load here and adapters saved here load in PEFT, with the same logits; and a merged model matches `merge_and_unload` and loads in Transformers. Real Hub adapters reproduce PEFT's logits and greedy tokens on their base checkpoints: [phh/Qwen3-0.6B-TLDR-Lora](https://huggingface.co/phh/Qwen3-0.6B-TLDR-Lora), [ali4566544/qwen2.5-0.5b-instruct-python-lora](https://huggingface.co/ali4566544/qwen2.5-0.5b-instruct-python-lora), [hfm8tr/smollm2-135m-smoltalk-lora](https://huggingface.co/hfm8tr/smollm2-135m-smoltalk-lora), and, with `rslora`, [socius/Llama-Centaur-1B-LoRA-r4](https://huggingface.co/socius/Llama-Centaur-1B-LoRA-r4).
+
 ## Models
 
 Any checkpoint with a supported architecture loads with `CausalLM.from_pretrained` or `Encoder.from_pretrained`, from the Hugging Face Hub or a local directory. These checkpoints are verified by the test suite, and collected on the Hugging Face Hub in [Verified in eqx-zoo](https://huggingface.co/collections/xquantize/verified-in-eqx-zoo-6ac2d731fd1ef3e109541bf7).
