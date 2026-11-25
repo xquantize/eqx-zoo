@@ -129,5 +129,43 @@ TINY_EMBEDDERS = {
     "tiny-qwen3-embedder": ("Qwen3Config", {"tie_word_embeddings": True, "head_dim": 32}),
 }
 
+# Hub LoRA adapters: test id -> (base repository, adapter repository, adapter git revision).
+# The revision is pinned, so that a later change to the adapter can't change what is verified.
+# Each adapter's base has the weights it was trained against: the base repository's weight files
+# are unchanged since before the adapter was created (checked from the Hub's file hashes).
+ADAPTER_CHECKPOINTS = {
+    # Qwen3, q and v only, with dropout; Apache-2.0.
+    "qwen3-0.6b-tldr-lora": (
+        "Qwen/Qwen3-0.6B",
+        "phh/Qwen3-0.6B-TLDR-Lora",
+        "0f39534202828516c2645f1aeb8c5e9e9a0f6801",
+    ),
+    # Every linear layer, on a base whose q/k/v have biases; Apache-2.0.
+    "qwen2.5-0.5b-instruct-python-lora": (
+        "Qwen/Qwen2.5-0.5B-Instruct",
+        "ali4566544/qwen2.5-0.5b-instruct-python-lora",
+        "5ecafffc2e23deebae61af586617143e596743a1",
+    ),
+    # SmolLM2 (Llama architecture), q and v only; the adapter states no licence (the base is
+    # Apache-2.0).
+    "smollm2-135m-smoltalk-lora": (
+        "HuggingFaceTB/SmolLM2-135M",
+        "hfm8tr/smollm2-135m-smoltalk-lora",
+        "fb39c7012c3b125f94d2bb1a093254994053f4ca",
+    ),
+    # Llama 3.2 1B, every linear layer, rank-stabilised (use_rslora); Llama 3.2 licence. Its
+    # base is the repository registered as `llama-3.2-1b` above.
+    "llama-3.2-1b-centaur-lora-r4": (
+        "unsloth/Llama-3.2-1B",
+        "socius/Llama-Centaur-1B-LoRA-r4",
+        "186b1af6c6a30721317e402368cd9326cafd4968",
+    ),
+}
+
 # Every registered checkpoint: used to validate --checkpoint and to create CI jobs.
-ALL_CHECKPOINTS = {**CHECKPOINTS, **ENCODER_CHECKPOINTS, **EMBEDDER_CHECKPOINTS}
+ALL_CHECKPOINTS = {
+    **CHECKPOINTS,
+    **ENCODER_CHECKPOINTS,
+    **EMBEDDER_CHECKPOINTS,
+    **ADAPTER_CHECKPOINTS,
+}
