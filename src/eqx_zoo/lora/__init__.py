@@ -5,6 +5,7 @@ A LoRA layer wraps a linear layer `y = W x + b` and adds a trainable low-rank up
 exactly as in PEFT's `lora.Linear`. Only plain LoRA is implemented; variants such as DoRA are not.
 """
 
+from eqx_zoo.lora.adapt import add_adapter, trainable
 from eqx_zoo.lora.layers import LoRAConv1D, LoRALinear, lora_scaling
 
-__all__ = ["LoRAConv1D", "LoRALinear", "lora_scaling"]
+__all__ = ["LoRAConv1D", "LoRALinear", "add_adapter", "lora_scaling", "trainable"]
