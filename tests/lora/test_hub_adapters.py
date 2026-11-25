@@ -103,9 +103,12 @@ def test_a_saved_adapter_loads_in_peft(case, tmp_path):
         pytest.skip("the round trip is checked on one adapter")
     base_repo = ADAPTER_CHECKPOINTS[case.name][0]
     save_adapter(case.model, tmp_path)
+    # Loaded and then converted, so that this works with every transformers version (older ones
+    # call the loading argument `torch_dtype`, newer ones `dtype`). Exact for these bases, which
+    # are stored in a single dtype no wider than float32.
     base = transformers.AutoModelForCausalLM.from_pretrained(
-        base_repo, dtype=torch.float32, attn_implementation="eager"
-    )
+        base_repo, attn_implementation="eager"
+    ).float()
     reloaded = peft.PeftModel.from_pretrained(base, tmp_path).eval()
     ids = torch.tensor(case.reference["input_ids"])[None]
     with torch.no_grad():

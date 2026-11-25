@@ -15,9 +15,16 @@ OPTIONS = {
 
 
 def hf_model(checkpoint, name, dtype=torch.float32):
-    return transformers.AutoModelForCausalLM.from_pretrained(
-        checkpoint(name), dtype=dtype, attn_implementation="eager"
+    """A tiny Hugging Face model in `dtype`.
+
+    Loaded and then converted, which is exact for the tiny models (saved entirely in float32,
+    so converting to bfloat16 rounds as loading in bfloat16 does) and works on every supported
+    transformers version: older ones call the loading argument `torch_dtype`, newer ones `dtype`.
+    """
+    model = transformers.AutoModelForCausalLM.from_pretrained(
+        checkpoint(name), attn_implementation="eager"
     )
+    return model.to(dtype)
 
 
 def peft_config(options) -> peft.LoraConfig:

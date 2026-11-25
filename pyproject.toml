@@ -41,7 +41,9 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "peft>=0.15.2",
+    # 0.16 is the first release whose merge scales a lora_B bias (0.15 adds it unscaled), and
+    # releases from 0.18 can't be imported with our oldest transformers, 4.51.3.
+    "peft>=0.16.0",
     "pytest>=9.1.1",
     "ruff>=0.16.9",
     "sentence-transformers>=3",
