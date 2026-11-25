@@ -10,7 +10,7 @@ import peft
 import torch
 from transformers.pytorch_utils import Conv1D as TorchConv1D
 
-from eqx_zoo.lora import LoRAConv1D, LoRALinear, lora_scaling
+from eqx_zoo.lora import LoRAConv1D, LoRALinear
 from eqx_zoo.models.gpt2.model import Conv1D
 
 DTYPES = {"float32": (torch.float32, jnp.float32), "bfloat16": (torch.bfloat16, jnp.bfloat16)}
@@ -100,7 +100,8 @@ def build(case: Case, seed: int = 0):
         jax_base,
         jnp.asarray(lora["lora_A.weight"]),
         jnp.asarray(lora["lora_B.weight"]),
-        scaling=lora_scaling(r, case.alpha, rslora=case.rslora),
+        alpha=case.alpha,
+        rslora=case.rslora,
         lora_B_bias=jnp.asarray(lora["lora_B.bias"]) if case.lora_bias else None,
     )
 

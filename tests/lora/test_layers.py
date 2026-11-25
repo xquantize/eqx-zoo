@@ -128,23 +128,21 @@ def test_shape_mismatches_are_rejected(wrapper):
     cls = LoRALinear if wrapper == "linear" else LoRAConv1D
     a, b = ours.lora_A, ours.lora_B
     with pytest.raises(ValueError, match="lora_A"):
-        cls(ours.base, a.T, b, scaling=1.0)
+        cls(ours.base, a.T, b, alpha=1.0)
     with pytest.raises(ValueError, match="lora_B"):
-        cls(ours.base, a, b.T, scaling=1.0)
+        cls(ours.base, a, b.T, alpha=1.0)
     with pytest.raises(ValueError, match="lora_B_bias"):
-        cls(ours.base, a, b, scaling=1.0, lora_B_bias=jnp.zeros(3))
+        cls(ours.base, a, b, alpha=1.0, lora_B_bias=jnp.zeros(3))
 
 
 def test_lora_bias_needs_a_base_bias_to_merge():
     base = eqx.nn.Linear(4, 3, use_bias=False, key=jax.random.key(0))
-    layer = LoRALinear(
-        base, jnp.ones((2, 4)), jnp.ones((3, 2)), scaling=1.0, lora_B_bias=jnp.ones(3)
-    )
+    layer = LoRALinear(base, jnp.ones((2, 4)), jnp.ones((3, 2)), alpha=1.0, lora_B_bias=jnp.ones(3))
     with pytest.raises(ValueError, match="no bias"):
         layer.merged()
 
 
 def test_layers_without_a_base_bias_merge_without_one():
     base = eqx.nn.Linear(4, 3, use_bias=False, key=jax.random.key(0))
-    layer = LoRALinear(base, jnp.ones((2, 4)), jnp.ones((3, 2)), scaling=1.0)
+    layer = LoRALinear(base, jnp.ones((2, 4)), jnp.ones((3, 2)), alpha=1.0)
     assert layer.merged().bias is None

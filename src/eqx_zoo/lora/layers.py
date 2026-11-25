@@ -84,14 +84,16 @@ class LoRALinear(eqx.Module):
         lora_A: Down-projection, shaped (r, in_features).
         lora_B: Up-projection, shaped (out_features, r).
         lora_B_bias: Bias of the up-projection (PEFT's `lora_bias`), or `None`.
-        scaling: Factor the update is multiplied by; see `lora_scaling`.
+        alpha: PEFT's `lora_alpha`.
+        rslora: Whether the scaling is rank-stabilised, `alpha / sqrt(r)`.
     """
 
     base: eqx.nn.Linear
     lora_A: Float[Array, "r in_features"]
     lora_B: Float[Array, "out_features r"]
     lora_B_bias: Float[Array, " out_features"] | None
-    scaling: float = eqx.field(static=True)
+    alpha: float = eqx.field(static=True)
+    rslora: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -99,7 +101,8 @@ class LoRALinear(eqx.Module):
         lora_A: Float[Array, "r in_features"],
         lora_B: Float[Array, "out_features r"],
         *,
-        scaling: float,
+        alpha: float,
+        rslora: bool = False,
         lora_B_bias: Float[Array, " out_features"] | None = None,
     ):
         """Wrap a layer.
@@ -108,18 +111,31 @@ class LoRALinear(eqx.Module):
             base: The layer to adapt.
             lora_A: Down-projection, shaped (r, in_features).
             lora_B: Up-projection, shaped (out_features, r).
-            scaling: Factor the update is multiplied by; see `lora_scaling`.
+            alpha: PEFT's `lora_alpha`; the update is scaled by `alpha / r`.
+            rslora: Scale by `alpha / sqrt(r)` instead (rank-stabilised LoRA).
             lora_B_bias: Bias of the up-projection, or `None`.
 
         Raises:
-            ValueError: If the shapes don't fit `base`.
+            ValueError: If the shapes don't fit `base`, or the rank is not positive.
         """
         _check_shapes(base.in_features, base.out_features, lora_A, lora_B, lora_B_bias)
         self.base = base
         self.lora_A = lora_A
         self.lora_B = lora_B
         self.lora_B_bias = lora_B_bias
-        self.scaling = float(scaling)
+        self.alpha = float(alpha)
+        self.rslora = rslora
+        lora_scaling(lora_A.shape[0], alpha, rslora=rslora)  # validates the rank
+
+    @property
+    def r(self) -> int:
+        """The rank of the update."""
+        return self.lora_A.shape[0]
+
+    @property
+    def scaling(self) -> float:
+        """The factor the update is multiplied by: `alpha / r`, or `alpha / sqrt(r)`."""
+        return lora_scaling(self.r, self.alpha, rslora=self.rslora)
 
     def __call__(self, x: Float[Array, " in_features"]) -> Float[Array, " out_features"]:
         """Apply the layer to one vector.
@@ -169,14 +185,16 @@ class LoRAConv1D(eqx.Module):
         lora_A: Down-projection, shaped (r, in_features).
         lora_B: Up-projection, shaped (out_features, r).
         lora_B_bias: Bias of the up-projection (PEFT's `lora_bias`), or `None`.
-        scaling: Factor the update is multiplied by; see `lora_scaling`.
+        alpha: PEFT's `lora_alpha`.
+        rslora: Whether the scaling is rank-stabilised, `alpha / sqrt(r)`.
     """
 
     base: Conv1D
     lora_A: Float[Array, "r in_features"]
     lora_B: Float[Array, "out_features r"]
     lora_B_bias: Float[Array, " out_features"] | None
-    scaling: float = eqx.field(static=True)
+    alpha: float = eqx.field(static=True)
+    rslora: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -184,7 +202,8 @@ class LoRAConv1D(eqx.Module):
         lora_A: Float[Array, "r in_features"],
         lora_B: Float[Array, "out_features r"],
         *,
-        scaling: float,
+        alpha: float,
+        rslora: bool = False,
         lora_B_bias: Float[Array, " out_features"] | None = None,
     ):
         """Wrap a layer.
@@ -193,11 +212,12 @@ class LoRAConv1D(eqx.Module):
             base: The layer to adapt.
             lora_A: Down-projection, shaped (r, in_features).
             lora_B: Up-projection, shaped (out_features, r).
-            scaling: Factor the update is multiplied by; see `lora_scaling`.
+            alpha: PEFT's `lora_alpha`; the update is scaled by `alpha / r`.
+            rslora: Scale by `alpha / sqrt(r)` instead (rank-stabilised LoRA).
             lora_B_bias: Bias of the up-projection, or `None`.
 
         Raises:
-            ValueError: If the shapes don't fit `base`.
+            ValueError: If the shapes don't fit `base`, or the rank is not positive.
         """
         in_features, out_features = base.weight.shape
         _check_shapes(in_features, out_features, lora_A, lora_B, lora_B_bias)
@@ -205,7 +225,19 @@ class LoRAConv1D(eqx.Module):
         self.lora_A = lora_A
         self.lora_B = lora_B
         self.lora_B_bias = lora_B_bias
-        self.scaling = float(scaling)
+        self.alpha = float(alpha)
+        self.rslora = rslora
+        lora_scaling(lora_A.shape[0], alpha, rslora=rslora)  # validates the rank
+
+    @property
+    def r(self) -> int:
+        """The rank of the update."""
+        return self.lora_A.shape[0]
+
+    @property
+    def scaling(self) -> float:
+        """The factor the update is multiplied by: `alpha / r`, or `alpha / sqrt(r)`."""
+        return lora_scaling(self.r, self.alpha, rslora=self.rslora)
 
     def __call__(
         self, x: Float[Array, "*batch in_features"]

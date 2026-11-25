@@ -4,6 +4,7 @@ import dataclasses
 import functools
 import math
 import re
+import warnings
 from collections.abc import Iterator, Sequence
 
 import equinox as eqx
@@ -11,7 +12,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PRNGKeyArray
 
-from eqx_zoo.lora.layers import LoRAConv1D, LoRALinear, lora_scaling
+from eqx_zoo.layers import SparseMoE
+from eqx_zoo.lora.layers import LoRAConv1D, LoRALinear
 from eqx_zoo.models.causal_lm import CausalLM
 from eqx_zoo.models.gpt2 import GPT2
 from eqx_zoo.models.gpt2.model import Conv1D
@@ -122,6 +124,70 @@ def _select(model, target_modules: str | Sequence[str]) -> list[tuple]:
     return selected
 
 
+def _check_model(model) -> None:
+    """Refuse models that can't take an adapter, or already have one.
+
+    Raises:
+        NotImplementedError: If the model is not a `CausalLM`, `GPT2` or `GPTNeoX`, or is a
+            Qwen3.5 or mixture-of-experts model.
+        ValueError: If the model already has an adapter.
+    """
+    if type(model) not in _OUTPUT_HEADS:
+        raise NotImplementedError(
+            f"adapters are supported for CausalLM, GPT2 and GPTNeoX, not {type(model).__name__}"
+        )
+    if isinstance(model, CausalLM) and model.config.architecture.startswith("Qwen3_5"):
+        raise NotImplementedError(
+            f"adapters for {model.config.architecture} are not supported yet: its checkpoints "
+            "name the language model's modules with another prefix"
+        )
+    if any(isinstance(module, SparseMoE) for _, module in _named_modules(model)):
+        raise NotImplementedError(
+            "adapters for mixture-of-experts models are not supported yet: the experts are "
+            "stacked arrays, and whether PEFT adapts the router is unchecked"
+        )
+    if adapter_layers(model):
+        raise ValueError("the model already has an adapter; only one is supported")
+
+
+def _linear_modules(model) -> dict[str, tuple]:
+    """Paths of every linear layer, by Hugging Face module name."""
+    return {
+        _name(model, path): path
+        for path, module in _named_modules(model)
+        if path and isinstance(module, eqx.nn.Linear | Conv1D)
+    }
+
+
+def _wrap(base, lora_A, lora_B, lora_B_bias, *, alpha: float, rslora: bool):
+    wrapper = LoRAConv1D if isinstance(base, Conv1D) else LoRALinear
+    return wrapper(base, lora_A, lora_B, alpha=alpha, rslora=rslora, lora_B_bias=lora_B_bias)
+
+
+def _insert(model, wrapped: dict[tuple, LoRALinear | LoRAConv1D]):
+    """The model with its layers at the given paths replaced."""
+    paths = list(wrapped)
+    return eqx.tree_at(
+        lambda m: tuple(_get(m, path) for path in paths), model, tuple(wrapped.values())
+    )
+
+
+def _warn_lora_bias_without_bias(model, wrapped: dict[tuple, LoRALinear | LoRAConv1D]) -> None:
+    """Warn, as PEFT does, about `lora_bias` on layers without a bias: they can't be merged."""
+    bare = [
+        _name(model, path)
+        for path, layer in wrapped.items()
+        if layer.lora_B_bias is not None and layer.base.bias is None
+    ]
+    if bare:
+        warnings.warn(
+            f"lora_bias=True, but {len(bare)} targeted layers have no bias (for example "
+            f"{bare[0]!r}), so this adapter can't be merged into them",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
 def add_adapter(
     model,
     *,
@@ -154,7 +220,9 @@ def add_adapter(
             whole name; or `"all-linear"` for every linear layer except the output head.
         key: PRNG key for initialisation, split per adapted layer.
         rslora: Scale by `alpha / sqrt(r)` instead (rank-stabilised LoRA).
-        lora_bias: Give each `lora_B` a bias, initialised to zero.
+        lora_bias: Give each `lora_B` a bias, initialised to zero. As in PEFT, this warns for
+            targeted layers that have no bias themselves, since the adapter can't be merged
+            into them.
         dropout: PEFT's `lora_dropout`. Only 0 is supported.
 
     Returns:
@@ -162,8 +230,8 @@ def add_adapter(
 
     Raises:
         NotImplementedError: If `dropout > 0` (training dropout needs a PRNG key in every
-            forward pass), the model is not one of the supported classes, is a Qwen3.5
-            model, or a target is an embedding.
+            forward pass), the model is not one of the supported classes, is a Qwen3.5 or
+            mixture-of-experts model, or a target is an embedding.
         ValueError: If the model already has an adapter, `r` is not positive, `target_modules`
             matches no layer, or it matches a module that is not a linear layer.
     """
@@ -172,19 +240,10 @@ def add_adapter(
             f"dropout={dropout}: LoRA dropout in training would need a PRNG key in every "
             "forward pass, which is not supported; use dropout=0.0"
         )
-    if type(model) not in _OUTPUT_HEADS:
-        raise NotImplementedError(
-            f"adapters are supported for CausalLM, GPT2 and GPTNeoX, not {type(model).__name__}"
-        )
-    if isinstance(model, CausalLM) and model.config.architecture.startswith("Qwen3_5"):
-        raise NotImplementedError(
-            f"adapters for {model.config.architecture} are not supported yet: its checkpoints "
-            "name the language model's modules with another prefix"
-        )
-    if adapter_layers(model):
-        raise ValueError("the model already has an adapter; only one is supported")
-    scaling = lora_scaling(r, alpha, rslora=rslora)  # also validates r
+    _check_model(model)
 
+    if r <= 0:
+        raise ValueError(f"r must be a positive integer, got {r}")
     paths = _select(model, target_modules)
     if not paths:
         existing = sorted(
@@ -204,7 +263,7 @@ def add_adapter(
             f"the names {existing} (for example {example!r})"
         )
 
-    layers = []
+    wrapped = {}
     for path, layer_key in zip(paths, jax.random.split(key, len(paths)), strict=True):
         base = _get(model, path)
         in_features, out_features = _in_features(base), _out_features(base)
@@ -212,17 +271,11 @@ def add_adapter(
         lora_A = jax.random.uniform(
             layer_key, (r, in_features), dtype=jnp.float32, minval=-bound, maxval=bound
         )
-        wrapper = LoRAConv1D if isinstance(base, Conv1D) else LoRALinear
-        layers.append(
-            wrapper(
-                base,
-                lora_A,
-                jnp.zeros((out_features, r), dtype=jnp.float32),
-                scaling=scaling,
-                lora_B_bias=jnp.zeros(out_features, dtype=jnp.float32) if lora_bias else None,
-            )
-        )
-    return eqx.tree_at(lambda m: tuple(_get(m, path) for path in paths), model, tuple(layers))
+        lora_B = jnp.zeros((out_features, r), dtype=jnp.float32)
+        lora_B_bias = jnp.zeros(out_features, dtype=jnp.float32) if lora_bias else None
+        wrapped[path] = _wrap(base, lora_A, lora_B, lora_B_bias, alpha=alpha, rslora=rslora)
+    _warn_lora_bias_without_bias(model, wrapped)
+    return _insert(model, wrapped)
 
 
 def trainable(model):
