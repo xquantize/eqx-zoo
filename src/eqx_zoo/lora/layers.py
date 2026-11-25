@@ -1,6 +1,7 @@
 """LoRA wrappers for linear layers, reproducing the arithmetic of PEFT's `lora.Linear`."""
 
 import math
+from typing import ClassVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -87,6 +88,8 @@ class LoRALinear(eqx.Module):
         alpha: PEFT's `lora_alpha`.
         rslora: Whether the scaling is rank-stabilised, `alpha / sqrt(r)`.
     """
+
+    _is_adapter_layer: ClassVar[bool] = True  # read by `refuse_adapters`; see `_loading.py`
 
     base: eqx.nn.Linear
     lora_A: Float[Array, "r in_features"]
@@ -188,6 +191,8 @@ class LoRAConv1D(eqx.Module):
         alpha: PEFT's `lora_alpha`.
         rslora: Whether the scaling is rank-stabilised, `alpha / sqrt(r)`.
     """
+
+    _is_adapter_layer: ClassVar[bool] = True  # read by `refuse_adapters`; see `_loading.py`
 
     base: Conv1D
     lora_A: Float[Array, "r in_features"]

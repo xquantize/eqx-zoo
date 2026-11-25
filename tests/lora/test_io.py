@@ -29,21 +29,21 @@ from support.tiny import PROMPT_IDS
 pytest.importorskip("peft")
 import peft  # noqa: E402
 import torch  # noqa: E402
-import transformers  # noqa: E402
 
 from eqx_zoo.lora import add_adapter, load_adapter, save_adapter, trainable  # noqa: E402
 from eqx_zoo.lora.adapt import adapter_layers  # noqa: E402
 from lora.helpers import IDS, MODELS, adapted, load, randomise  # noqa: E402
+from lora.peft_adapters import (  # noqa: E402
+    OPTIONS,
+    hf_model,
+    make_peft_adapter,
+    peft_logits,
+    relative_error,
+)
 
 # Largest logit difference from PEFT, relative to the largest logit.
 LOGITS_TOLERANCE = 1e-5
 
-OPTIONS = {
-    "plain": {"r": 4, "alpha": 4},
-    "alpha-not-r": {"r": 4, "alpha": 10},
-    "rslora": {"r": 4, "alpha": 10, "rslora": True},
-    "lora-bias": {"r": 4, "alpha": 10, "lora_bias": True},
-}
 CASES = [
     pytest.param(name, options, id=f"{name}-{option}")
     for name in MODELS
@@ -51,42 +51,6 @@ CASES = [
 ]
 # PEFT warns about lora_bias on layers without a bias; that is not what these tests are about.
 pytestmark = pytest.mark.filterwarnings("ignore:lora_bias=True", "ignore:`lora_bias=True`")
-
-
-def hf_model(checkpoint, name):
-    return transformers.AutoModelForCausalLM.from_pretrained(
-        checkpoint(name), dtype=torch.float32, attn_implementation="eager"
-    )
-
-
-def peft_config(options) -> peft.LoraConfig:
-    return peft.LoraConfig(
-        r=options["r"],
-        lora_alpha=options["alpha"],
-        use_rslora=options.get("rslora", False),
-        lora_bias=options.get("lora_bias", False),
-        target_modules="all-linear",
-    )
-
-
-def make_peft_adapter(checkpoint, name, options, seed=0):
-    """PEFT's model with a random adapter (trainable), around the tiny checkpoint."""
-    torch.manual_seed(seed)
-    model = peft.get_peft_model(hf_model(checkpoint, name), peft_config(options))
-    with torch.no_grad():
-        for parameter_name, parameter in model.named_parameters():
-            if "lora_" in parameter_name:
-                parameter.normal_(0.0, 0.1)
-    return model.eval()
-
-
-def peft_logits(model) -> np.ndarray:
-    with torch.no_grad():
-        return model(torch.tensor([PROMPT_IDS])).logits[0].numpy()
-
-
-def relative_error(got, expected) -> float:
-    return float(np.abs(np.asarray(got) - expected).max() / np.abs(expected).max())
 
 
 def adapter_arrays(model) -> dict[str, np.ndarray]:

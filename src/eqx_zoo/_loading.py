@@ -129,6 +129,32 @@ def load_safetensors[T](
     return jax.tree_util.tree_unflatten(treedef, loaded)
 
 
+def refuse_adapters(model) -> None:
+    """Raise if the model has LoRA adapter layers, which can't be saved as a checkpoint.
+
+    A wrapped layer keeps its weights under another path (`q_proj.base.weight`), so they would
+    be saved under the wrong names. Adapter layers are recognised by a class attribute,
+    `_is_adapter_layer`, rather than by importing them, so that the models don't depend on the
+    `lora` package.
+
+    Args:
+        model: The model about to be saved.
+
+    Raises:
+        ValueError: If the model has an adapter.
+    """
+
+    def is_adapter(node) -> bool:
+        return getattr(type(node), "_is_adapter_layer", False)
+
+    if any(is_adapter(node) for node in jax.tree_util.tree_leaves(model, is_leaf=is_adapter)):
+        raise ValueError(
+            "this model has a LoRA adapter, whose layers would be saved under the wrong "
+            "parameter names: fold it into the weights with eqx_zoo.lora.merge(model) and save "
+            "that, or save the adapter alone with eqx_zoo.lora.save_adapter(model, directory)"
+        )
+
+
 def save_safetensors(
     model,
     file: str | Path,
@@ -151,6 +177,7 @@ def save_safetensors(
     """
     from safetensors.flax import save_file
 
+    refuse_adapters(model)
     tensors = {}
     for path, leaf in jax.tree_util.tree_flatten_with_path(eqx.filter(model, eqx.is_array))[0]:
         name = _path_to_name(path)

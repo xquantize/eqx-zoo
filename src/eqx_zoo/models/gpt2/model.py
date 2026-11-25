@@ -11,7 +11,12 @@ from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 from safetensors import safe_open
 
-from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetensors
+from eqx_zoo._loading import (
+    config_with_dtype,
+    load_safetensors,
+    refuse_adapters,
+    save_safetensors,
+)
 from eqx_zoo.layers import Cache, KVCache, LayerNorm, causal_mask, dot_product_attention
 from eqx_zoo.layers._common import at_least_float32
 from eqx_zoo.models.gpt2.config import GPT2Config
@@ -378,8 +383,10 @@ class GPT2(eqx.Module):
             directory: Destination directory; created if needed.
 
         Raises:
-            ValueError: If the model wasn't loaded with `from_pretrained`.
+            ValueError: If the model has a LoRA adapter (merge it with `eqx_zoo.lora.merge`),
+                or wasn't loaded with `from_pretrained`.
         """
+        refuse_adapters(self)
         if self.hf_config is None:
             raise ValueError(
                 "only models loaded with from_pretrained can be saved: there is no original "
