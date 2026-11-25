@@ -15,7 +15,12 @@ import jax.numpy as jnp
 from huggingface_hub import snapshot_download
 from jaxtyping import Array, Bool, DTypeLike, Float, Int, PRNGKeyArray
 
-from eqx_zoo._loading import config_with_dtype, load_safetensors, save_safetensors
+from eqx_zoo._loading import (
+    config_with_dtype,
+    load_safetensors,
+    refuse_adapters,
+    save_safetensors,
+)
 from eqx_zoo.layers import (
     Cache,
     KVCache,
@@ -440,8 +445,10 @@ class GPTNeoX(eqx.Module):
             directory: Destination directory; created if needed.
 
         Raises:
-            ValueError: If the model wasn't loaded with `from_pretrained`.
+            ValueError: If the model has a LoRA adapter (merge it with `eqx_zoo.lora.merge`),
+                or wasn't loaded with `from_pretrained`.
         """
+        refuse_adapters(self)
         if self.hf_config is None:
             raise ValueError(
                 "only models loaded with from_pretrained can be saved: there is no original "
