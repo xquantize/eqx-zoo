@@ -126,9 +126,12 @@ def test_saved_merged_model_loads_in_transformers(checkpoint, tmp_path, name, op
     torch_dtype, _ = DTYPES[dtype]
     _, _, merged, unloaded = scenario(checkpoint, tmp_path, name, option, dtype)
     merged.save_pretrained(tmp_path / "merged")
+    # Loaded and then converted, as in `hf_model`: exact here, since the saved weights are
+    # float32 or bfloat16, and it works with every transformers version.
     reloaded = transformers.AutoModelForCausalLM.from_pretrained(
-        tmp_path / "merged", dtype=torch_dtype, attn_implementation="eager"
-    ).eval()
+        tmp_path / "merged", attn_implementation="eager"
+    )
+    reloaded = reloaded.to(torch_dtype).eval()
     assert relative_error(peft_logits(reloaded), peft_logits(unloaded)) <= SAVED_TOLERANCE[dtype]
     assert relative_error(merged(IDS)[0], peft_logits(reloaded)) <= PEFT_TOLERANCE[dtype]
 
@@ -173,7 +176,9 @@ def test_merging_needs_a_base_bias_for_lora_bias(checkpoint, tmp_path):
     with pytest.raises(ValueError, match="no bias"):
         merge(model)
     reference = make_peft_adapter(checkpoint, "tiny-llama", OPTIONS["lora-bias"])
-    with pytest.raises(RuntimeError, match="Impossible to merge"):
+    # PEFT 0.18 raises a RuntimeError that says so; 0.16 and 0.17 fail with an AttributeError
+    # (there is no bias to update). Either way, PEFT can't merge it.
+    with pytest.raises((RuntimeError, AttributeError)):
         reference.merge_and_unload()
 
 

@@ -291,8 +291,9 @@ def save_adapter(model, directory: str | os.PathLike[str]) -> None:
         "rank_pattern": {},
         "alpha_pattern": {},
         "modules_to_save": None,
-        "target_parameters": None,
         "trainable_token_indices": None,
+        # Not `target_parameters` (PEFT 0.17): older PEFT warns about fields it doesn't know, and
+        # the default (none) applies when it is missing.
     }
     path = Path(directory)
     path.mkdir(parents=True, exist_ok=True)
