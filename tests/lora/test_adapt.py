@@ -5,19 +5,20 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from support.models import model_class
-from support.tiny import PROMPT_IDS, build, build_encoder
+from support.tiny import build_encoder
 
 pytest.importorskip("peft")
+
+# Several tests ask for lora_bias on models whose layers have no bias; the warning is tested apart.
+pytestmark = pytest.mark.filterwarnings("ignore:lora_bias=True")
+
 import peft  # noqa: E402
 import transformers  # noqa: E402
 
 from eqx_zoo import Encoder  # noqa: E402
 from eqx_zoo.lora import LoRAConv1D, LoRALinear, add_adapter, trainable  # noqa: E402
 from eqx_zoo.lora.adapt import adapter_layers  # noqa: E402
-
-MODELS = ["tiny-llama", "tiny-qwen2", "tiny-gpt2", "tiny-gpt-neox"]
-IDS = jnp.array(PROMPT_IDS)
+from lora.helpers import IDS, MODELS, adapted, leaves, load  # noqa: E402
 
 # Per model: target_modules for a list (suffix matching), a regex, and an exact full name.
 TARGETS = {
@@ -54,26 +55,6 @@ CASES = [
 ]
 
 
-@pytest.fixture(scope="module")
-def checkpoint(tmp_path_factory):
-    """A tiny checkpoint directory, built once per model."""
-    cache = {}
-
-    def get(name):
-        if name not in cache:
-            directory = tmp_path_factory.mktemp(name)
-            build(name, directory)
-            cache[name] = directory
-        return cache[name]
-
-    return get
-
-
-def load(checkpoint, name, **kwargs):
-    directory = checkpoint(name)
-    return model_class(directory).from_pretrained(directory, **kwargs)
-
-
 def peft_wrapped(checkpoint, name, target_modules) -> set[str]:
     """The module names PEFT wraps in a LoRA layer, or the error it raises."""
     hf = transformers.AutoModelForCausalLM.from_pretrained(checkpoint(name))
@@ -83,17 +64,6 @@ def peft_wrapped(checkpoint, name, target_modules) -> set[str]:
         for n, m in wrapped.named_modules()
         if isinstance(m, peft.tuners.lora.LoraLayer)
     }
-
-
-def leaves(tree) -> dict[str, object]:
-    flat = jax.tree_util.tree_flatten_with_path(tree)[0]
-    return {jax.tree_util.keystr(path): leaf for path, leaf in flat}
-
-
-def adapted(checkpoint, name, **kwargs):
-    model = load(checkpoint, name)
-    options = {"r": 4, "alpha": 8, "target_modules": "all-linear", "key": jax.random.key(0)}
-    return model, add_adapter(model, **(options | kwargs))
 
 
 @pytest.mark.parametrize(("name", "target"), CASES)

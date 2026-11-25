@@ -6,6 +6,15 @@ exactly as in PEFT's `lora.Linear`. Only plain LoRA is implemented; variants suc
 """
 
 from eqx_zoo.lora.adapt import add_adapter, trainable
+from eqx_zoo.lora.io import load_adapter, save_adapter
 from eqx_zoo.lora.layers import LoRAConv1D, LoRALinear, lora_scaling
 
-__all__ = ["LoRAConv1D", "LoRALinear", "add_adapter", "lora_scaling", "trainable"]
+__all__ = [
+    "LoRAConv1D",
+    "LoRALinear",
+    "add_adapter",
+    "load_adapter",
+    "lora_scaling",
+    "save_adapter",
+    "trainable",
+]
